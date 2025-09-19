@@ -116,7 +116,7 @@
             gap: 8px;
         }
 
-        .btn:hover:not(:disabled) {
+        .btn:hover {
             transform: translateY(-2px);
         }
 
@@ -281,22 +281,6 @@
             color: #667eea;
         }
 
-        .update-indicator {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: #28a745;
-            opacity: 0;
-            transition: opacity 0.3s ease;
-        }
-
-        .update-indicator.active {
-            opacity: 1;
-        }
-
         @media (max-width: 768px) {
             .main-content {
                 grid-template-columns: 1fr;
@@ -347,7 +331,6 @@
             <div class="connection-status disconnected" id="connectionStatus">
                 Disconnected
             </div>
-            <div class="update-indicator" id="updateIndicator"></div>
         </div>
 
         <div class="main-content">
@@ -360,13 +343,6 @@
                     <button class="btn btn-success" id="startBtn" onclick="startTracking()" disabled>Start Scan</button>
                     <button class="btn btn-danger" id="stopBtn" onclick="stopTracking()" disabled>Stop</button>
                     <button class="btn btn-secondary" id="resetBtn" onclick="resetSystem()" disabled>Reset</button>
-                    <button class="btn btn-warning" id="statusBtn" onclick="refreshStatus()" disabled>Refresh
-                        Status</button>
-                </div>
-                <div id="instructions"
-                    style="margin-top: 15px; padding: 12px; background: #e8f4f8; border-radius: 8px; color: #2c5aa0; display: none;">
-                    <strong>Instructions:</strong> When the servo stops moving, click "Refresh Status" to get the final
-                    scan results.
                 </div>
             </div>
 
@@ -412,7 +388,7 @@
                 <div class="chart-container">
                     <canvas id="rssiChart" width="400" height="300"></canvas>
                     <div class="chart-placeholder" id="chartPlaceholder">
-                        Connect to ESP32 and start scanning to see RSSI data
+                        Start scanning to see RSSI data
                     </div>
                 </div>
             </div>
@@ -426,12 +402,11 @@
 
     <script>
         let esp32IP = '';
-        let connected = false;
+        let eventSource = null;
+        let rssiData = [];
         let chartCanvas = null;
         let chartContext = null;
-        let updateInterval = null;
-        let rssiData = [];
-        let lastStatusUpdate = null;
+        let connected = false;
 
         // Initialize chart
         function initChart() {
@@ -475,57 +450,17 @@
             chartContext.fillText('RSSI', 5, 15);
         }
 
-        function updateChart(data) {
-            if (!chartContext) return;
-
-            // Get results data from ESP32 if scan is complete
-            if (data.complete) {
-                fetchAndDisplayResults();
-                return;
-            }
-
-            // For ongoing tracking, we'll need to periodically fetch data
-            if (data.tracking || data.collecting) {
-                fetchCurrentData();
-            }
-        }
-
-        function fetchAndDisplayResults() {
-            fetch(`http://${esp32IP}/api/results`)
-                .then(response => response.json())
-                .then(data => {
-                    if (data.validReadings && data.validReadings.length > 0) {
-                        rssiData = data.validReadings;
-                        drawChart(rssiData);
-                        document.getElementById('chartPlaceholder').style.display = 'none';
-                    }
-                })
-                .catch(error => {
-                    console.log('Results fetch error:', error);
-                });
-        }
-
-        function fetchCurrentData() {
-            fetch(`http://${esp32IP}/api/data`)
-                .then(response => response.json())
-                .then(data => {
-                    // This endpoint returns current tracking progress
-                    // We can use this to show partial chart updates if needed
-                })
-                .catch(error => {
-                    console.log('Data fetch error:', error);
-                });
-        }
-
-        function drawChart(validData) {
-            if (!chartContext || !validData || validData.length === 0) return;
+        function updateChart() {
+            if (!chartContext || rssiData.length === 0) return;
 
             clearChart();
 
             // Find min/max for scaling
-            const rssiValues = validData.map(d => d.rssi);
-            const minRSSI = Math.min(...rssiValues);
-            const maxRSSI = Math.max(...rssiValues);
+            const validData = rssiData.filter(d => d.rssi !== -999);
+            if (validData.length === 0) return;
+
+            const minRSSI = Math.min(...validData.map(d => d.rssi));
+            const maxRSSI = Math.max(...validData.map(d => d.rssi));
             const rssiRange = maxRSSI - minRSSI || 1;
 
             // Draw RSSI line
@@ -557,6 +492,8 @@
                 chartContext.arc(x, y, 3, 0, 2 * Math.PI);
                 chartContext.fill();
             }
+
+            document.getElementById('chartPlaceholder').style.display = 'none';
         }
 
         function connectToESP32() {
@@ -566,18 +503,19 @@
                 return;
             }
 
+            // Close existing connection
+            if (eventSource) {
+                eventSource.close();
+            }
+
             updateConnectionStatus('connecting');
             addLog('Connecting to ESP32 at ' + esp32IP + '...');
 
-            // Test connection
+            // Test connection first
             fetch(`http://${esp32IP}/`, { method: 'GET' })
                 .then(response => {
                     if (response.ok) {
-                        updateConnectionStatus('connected');
-                        addLog('Connected to ESP32 successfully!', 'success');
-                        connected = true;
-                        updateButtons();
-                        startStatusUpdates();
+                        startSSEConnection();
                     } else {
                         throw new Error('Invalid response');
                     }
@@ -585,65 +523,62 @@
                 .catch(error => {
                     updateConnectionStatus('disconnected');
                     addLog('Connection failed: ' + error.message, 'error');
-                    connected = false;
-                    updateButtons();
-                    stopStatusUpdates();
                 });
         }
 
-        function startStatusUpdates() {
-            // Remove automatic polling - user will manually refresh status
-            // Initial status fetch only
-            fetchStatus();
-        }
+        function startSSEConnection() {
+            eventSource = new EventSource(`http://${esp32IP}/events`);
 
-        function stopStatusUpdates() {
-            // No intervals to clear since we removed automatic polling
-        }
+            eventSource.onopen = function () {
+                updateConnectionStatus('connected');
+                addLog('Connected to ESP32 successfully!', 'success');
+                connected = true;
+                updateButtons();
+            };
 
-        function refreshStatus() {
-            if (!connected) return;
+            eventSource.onerror = function (error) {
+                updateConnectionStatus('disconnected');
+                addLog('Connection lost', 'error');
+                connected = false;
+                updateButtons();
+            };
 
-            addLog('Refreshing status...', 'info');
-            fetchStatus();
-        }
+            eventSource.addEventListener('status', function (event) {
+                const data = JSON.parse(event.data);
+                updateStatus(data);
+            });
 
-        function fetchStatus() {
-            const indicator = document.getElementById('updateIndicator');
-            indicator.classList.add('active');
+            eventSource.addEventListener('trackingStarted', function (event) {
+                const data = JSON.parse(event.data);
+                addLog('Tracking started!', 'success');
+                updateStatus(data);
+                rssiData = [];
+                clearChart();
+            });
 
-            fetch(`http://${esp32IP}/api/status`)
-                .then(response => response.json())
-                .then(data => {
-                    updateStatus(data);
-                    updateChart(data);
+            eventSource.addEventListener('angleUpdate', function (event) {
+                const data = JSON.parse(event.data);
+                addLog(`Scanning angle ${data.angle}° - RSSI: ${data.rssi} dBm`);
 
-                    // Check for status changes
-                    const currentStatusString = JSON.stringify(data);
-                    if (lastStatusUpdate !== currentStatusString) {
-                        if (data.status === 'tracking') {
-                            addLog(`Scanning angle ${data.currentAngle}°...`, 'info');
-                        } else if (data.complete && lastStatusUpdate && !JSON.parse(lastStatusUpdate).complete) {
-                            addLog(`Scan complete! Best angle: ${data.bestAngle}°, Best RSSI: ${data.bestRSSI} dBm`, 'success');
-                        }
-                        lastStatusUpdate = currentStatusString;
-                    }
+                if (data.rssi !== -999) {
+                    rssiData.push({ angle: data.angle, rssi: data.rssi });
+                    updateChart();
+                }
 
-                    setTimeout(() => {
-                        indicator.classList.remove('active');
-                    }, 200);
-                })
-                .catch(error => {
-                    console.log('Status fetch error:', error);
-                    if (error.message.includes('Failed to fetch')) {
-                        updateConnectionStatus('disconnected');
-                        connected = false;
-                        updateButtons();
-                        stopStatusUpdates();
-                        addLog('Connection lost to ESP32', 'error');
-                    }
-                    indicator.classList.remove('active');
-                });
+                updateProgress(data.progress, data.maxAngle);
+            });
+
+            eventSource.addEventListener('scanComplete', function (event) {
+                const data = JSON.parse(event.data);
+                addLog(`Scan complete! Best angle: ${data.bestAngle}°, Best RSSI: ${data.bestRSSI} dBm`, 'success');
+
+                // Update final results
+                document.getElementById('bestAngle').textContent = data.bestAngle + '°';
+                document.getElementById('bestRSSI').textContent = data.bestRSSI + ' dBm';
+                document.getElementById('systemStatus').textContent = 'Complete';
+
+                updateButtons();
+            });
         }
 
         function updateConnectionStatus(status) {
@@ -677,10 +612,6 @@
 
             updateProgress(data.progress, data.maxAngle);
             updateButtons();
-
-            // Update servo slider to match current angle
-            document.getElementById('angleSlider').value = data.currentAngle;
-            document.getElementById('angleDisplay').textContent = data.currentAngle + '°';
         }
 
         function updateProgress(current, max) {
@@ -693,14 +624,12 @@
             const startBtn = document.getElementById('startBtn');
             const stopBtn = document.getElementById('stopBtn');
             const resetBtn = document.getElementById('resetBtn');
-            const statusBtn = document.getElementById('statusBtn');
 
             const status = document.getElementById('systemStatus').textContent.toLowerCase();
 
             startBtn.disabled = !connected || status === 'tracking';
             stopBtn.disabled = !connected || status !== 'tracking';
             resetBtn.disabled = !connected;
-            statusBtn.disabled = !connected;
         }
 
         function startTracking() {
@@ -710,13 +639,7 @@
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
-                        addLog('Tracking started!', 'success');
-                        // Show instructions
-                        document.getElementById('instructions').style.display = 'block';
-                        rssiData = [];
-                        clearChart();
-                        document.getElementById('chartPlaceholder').textContent = 'Scanning in progress...';
-                        document.getElementById('chartPlaceholder').style.display = 'flex';
+                        addLog('Tracking command sent', 'success');
                     } else {
                         addLog('Failed to start tracking: ' + data.message, 'error');
                     }
@@ -744,11 +667,7 @@
                     addLog('System reset', 'info');
                     rssiData = [];
                     clearChart();
-                    document.getElementById('chartPlaceholder').textContent = 'Connect to ESP32 and start scanning to see RSSI data';
                     document.getElementById('chartPlaceholder').style.display = 'flex';
-                    // Reset displayed values
-                    document.getElementById('bestAngle').textContent = '-';
-                    document.getElementById('bestRSSI').textContent = '- dBm';
                 })
                 .catch(error => addLog('Error: ' + error.message, 'error'));
         }
@@ -813,11 +732,6 @@
             initChart();
             updateButtons();
             addLog('Dashboard ready. Enter ESP32 IP and click Connect.');
-        });
-
-        // Cleanup on page unload
-        window.addEventListener('beforeunload', function () {
-            stopStatusUpdates();
         });
     </script>
 </body>
