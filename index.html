@@ -233,6 +233,19 @@
             font-size: 1.1rem;
         }
 
+        .chart-tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+            z-index: 10;
+        }
+
         .live-log {
             grid-column: span 2;
             background: #1e1e1e;
@@ -389,6 +402,14 @@
                         <div class="status-label">Best RSSI</div>
                         <div class="status-value" id="bestRSSI">- dBm</div>
                     </div>
+                    <div class="status-item">
+                        <div class="status-label">LoRa Status</div>
+                        <div class="status-value" id="loraStatus">Unknown</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="status-label">WiFi Status</div>
+                        <div class="status-value" id="wifiStatus">Unknown</div>
+                    </div>
                 </div>
                 <div class="progress-container">
                     <div class="status-label">Scan Progress</div>
@@ -411,6 +432,7 @@
                 <h3 class="card-title">RSSI Chart</h3>
                 <div class="chart-container">
                     <canvas id="rssiChart" width="400" height="300"></canvas>
+                    <div class="chart-tooltip" id="chartTooltip"></div>
                     <div class="chart-placeholder" id="chartPlaceholder">
                         Connect to ESP32 and start scanning to see RSSI data
                     </div>
@@ -438,6 +460,53 @@
             chartCanvas = document.getElementById('rssiChart');
             chartContext = chartCanvas.getContext('2d');
             clearChart();
+
+            // Add mouse interaction
+            chartCanvas.addEventListener('mousemove', handleChartHover);
+            chartCanvas.addEventListener('mouseleave', hideTooltip);
+        }
+
+        function handleChartHover(event) {
+            if (!chartCanvas.chartData) return;
+
+            const rect = chartCanvas.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+
+            // Find closest data point
+            let closestPoint = null;
+            let minDistance = Infinity;
+
+            for (const point of chartCanvas.chartData) {
+                const pointX = (point.angle / 180) * chartCanvas.width;
+                const pointY = chartCanvas.height - ((point.rssi - chartCanvas.minRSSI) / chartCanvas.rssiRange) * chartCanvas.height;
+
+                const distance = Math.sqrt(Math.pow(x - pointX, 2) + Math.pow(y - pointY, 2));
+
+                if (distance < minDistance && distance < 20) { // 20px threshold
+                    minDistance = distance;
+                    closestPoint = point;
+                }
+            }
+
+            if (closestPoint) {
+                showTooltip(event, closestPoint);
+            } else {
+                hideTooltip();
+            }
+        }
+
+        function showTooltip(event, point) {
+            const tooltip = document.getElementById('chartTooltip');
+            tooltip.innerHTML = `Angle: ${point.angle}°<br>RSSI: ${point.rssi} dBm`;
+            tooltip.style.opacity = '1';
+            tooltip.style.left = (event.clientX + 10) + 'px';
+            tooltip.style.top = (event.clientY - 10) + 'px';
+        }
+
+        function hideTooltip() {
+            const tooltip = document.getElementById('chartTooltip');
+            tooltip.style.opacity = '0';
         }
 
         function clearChart() {
@@ -449,9 +518,9 @@
             chartContext.strokeStyle = '#e0e0e0';
             chartContext.lineWidth = 1;
 
-            // Vertical grid lines
-            for (let i = 0; i <= 18; i++) {
-                const x = (i * chartCanvas.width) / 18;
+            // Vertical grid lines (every 20 degrees)
+            for (let i = 0; i <= 9; i++) {
+                const x = (i * chartCanvas.width) / 9;
                 chartContext.beginPath();
                 chartContext.moveTo(x, 0);
                 chartContext.lineTo(x, chartCanvas.height);
@@ -467,12 +536,23 @@
                 chartContext.stroke();
             }
 
-            // Labels
+            // Angle labels (bottom)
             chartContext.fillStyle = '#666';
-            chartContext.font = '12px Arial';
-            chartContext.fillText('0°', 5, chartCanvas.height - 5);
-            chartContext.fillText('180°', chartCanvas.width - 25, chartCanvas.height - 5);
-            chartContext.fillText('RSSI', 5, 15);
+            chartContext.font = '10px Arial';
+            chartContext.textAlign = 'center';
+            for (let i = 0; i <= 9; i++) {
+                const x = (i * chartCanvas.width) / 9;
+                const angle = i * 20;
+                chartContext.fillText(angle + '°', x, chartCanvas.height - 5);
+            }
+
+            // RSSI label (left side)
+            chartContext.save();
+            chartContext.translate(15, chartCanvas.height / 2);
+            chartContext.rotate(-Math.PI / 2);
+            chartContext.textAlign = 'center';
+            chartContext.fillText('RSSI (dBm)', 0, 0);
+            chartContext.restore();
         }
 
         function updateChart(data) {
@@ -498,10 +578,14 @@
                         rssiData = data.validReadings;
                         drawChart(rssiData);
                         document.getElementById('chartPlaceholder').style.display = 'none';
+                        addLog(`Chart updated with ${data.validReadings.length} data points`, 'success');
+                    } else {
+                        addLog('No valid RSSI data found for chart', 'warning');
                     }
                 })
                 .catch(error => {
                     console.log('Results fetch error:', error);
+                    addLog('Failed to fetch chart data', 'error');
                 });
         }
 
@@ -527,6 +611,16 @@
             const minRSSI = Math.min(...rssiValues);
             const maxRSSI = Math.max(...rssiValues);
             const rssiRange = maxRSSI - minRSSI || 1;
+
+            // Draw RSSI scale on left axis
+            chartContext.fillStyle = '#666';
+            chartContext.font = '10px Arial';
+            chartContext.textAlign = 'right';
+            for (let i = 0; i <= 5; i++) {
+                const rssi = minRSSI + (i * rssiRange / 5);
+                const y = chartCanvas.height - (i * chartCanvas.height / 5);
+                chartContext.fillText(Math.round(rssi), 30, y + 3);
+            }
 
             // Draw RSSI line
             chartContext.strokeStyle = '#667eea';
@@ -554,9 +648,14 @@
                 const y = chartCanvas.height - ((point.rssi - minRSSI) / rssiRange) * chartCanvas.height;
 
                 chartContext.beginPath();
-                chartContext.arc(x, y, 3, 0, 2 * Math.PI);
+                chartContext.arc(x, y, 4, 0, 2 * Math.PI);
                 chartContext.fill();
             }
+
+            // Store data for tooltip
+            chartCanvas.chartData = validData;
+            chartCanvas.minRSSI = minRSSI;
+            chartCanvas.rssiRange = rssiRange;
         }
 
         function connectToESP32() {
@@ -570,7 +669,7 @@
             addLog('Connecting to ESP32 at ' + esp32IP + '...');
 
             // Test connection
-            fetch(`http://${esp32IP}/`, { method: 'GET' })
+            fetch(`http://${esp32IP}/`, { method: 'GET', timeout: 5000 })
                 .then(response => {
                     if (response.ok) {
                         updateConnectionStatus('connected');
@@ -616,7 +715,11 @@
                 .then(response => response.json())
                 .then(data => {
                     updateStatus(data);
-                    updateChart(data);
+
+                    // If scan is complete, also fetch and plot the results
+                    if (data.complete) {
+                        fetchAndDisplayResults();
+                    }
 
                     // Check for status changes
                     const currentStatusString = JSON.stringify(data);
@@ -666,10 +769,26 @@
         }
 
         function updateStatus(data) {
+            // Update system status - handle tracking vs collecting properly
+            let displayStatus = data.status;
+            if (data.tracking || data.collecting) {
+                displayStatus = 'scanning';
+            } else if (data.complete) {
+                displayStatus = 'complete';
+            }
+
             document.getElementById('systemStatus').textContent =
-                data.status.charAt(0).toUpperCase() + data.status.slice(1);
+                displayStatus.charAt(0).toUpperCase() + displayStatus.slice(1);
             document.getElementById('currentAngle').textContent = data.currentAngle + '°';
 
+            // Update LoRa and WiFi status
+            document.getElementById('loraStatus').textContent = data.loraActive ? 'Active' : 'Inactive';
+            document.getElementById('loraStatus').style.color = data.loraActive ? '#4CAF50' : '#f44336';
+
+            document.getElementById('wifiStatus').textContent = data.wifiConnected ? 'Connected' : 'Disconnected';
+            document.getElementById('wifiStatus').style.color = data.wifiConnected ? '#4CAF50' : '#f44336';
+
+            // Update best results
             if (data.bestAngle >= 0) {
                 document.getElementById('bestAngle').textContent = data.bestAngle + '°';
                 document.getElementById('bestRSSI').textContent = data.bestRSSI + ' dBm';
