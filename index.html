@@ -5,103 +5,234 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LoRa Antenna Tracker Dashboard</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="dashboard.css">
 </head>
 
-<body>
-    <div class="dashboard">
-        <div class="header">
-            <h1>LoRa Antenna Tracker</h1>
-            <div class="connection-status disconnected" id="connectionStatus">
-                Disconnected
-            </div>
-            <div class="update-indicator" id="updateIndicator"></div>
+<body class="bg-dark text-light">
+    <div class="container py-4">
+
+        <!-- Header -->
+        <div class="text-center mb-5">
+            <h1 class="fw-bold" style="color: aliceblue;">LoRa Antenna Tracker</h1>
         </div>
 
-        <div class="main-content">
-            <div class="control-panel">
-                <h3 class="card-title">Connection & Control</h3>
-                <div class="controls">
-                    <input type="text" id="esp32IP" class="esp32-input"
-                        placeholder="ESP32 IP Address (e.g., 10.214.162.121)" value="10.214.162.121">
-                    <button class="btn btn-primary" onclick="connectToESP32()">Connect</button>
-                    <button class="btn btn-success" id="startBtn" onclick="startTracking()" disabled>Start Scan</button>
-                    <button class="btn btn-danger" id="stopBtn" onclick="stopTracking()" disabled>Stop</button>
-                    <button class="btn btn-secondary" id="resetBtn" onclick="resetSystem()" disabled>Reset</button>
-                    <button class="btn btn-warning" id="statusBtn" onclick="refreshStatus()" disabled>Refresh
-                        Status</button>
-                </div>
-                <div id="instructions"
-                    style="margin-top: 15px; padding: 12px; background: #e8f4f8; border-radius: 8px; color: #2c5aa0; display: none;">
-                    <strong>Instructions:</strong> When the servo stops moving, click "Refresh Status" to get the final
-                    scan results.
+        <div class="row g-4">
+
+            <!-- Device 1 Panel -->
+            <div class="col-12 col-lg-6">
+                <div class="card shadow-dark card-dark">
+                    <div class="card-header bg-purple text-white">
+                        <h5 class="mb-0">ESP32 Device 1</h5>
+                    </div>
+                    <div class="card-body">
+
+                        <!-- Connection Status -->
+                        <div class="mb-3">
+                            <span class="badge bg-danger" id="connectionStatus1">Disconnected</span>
+                        </div>
+
+                        <!-- Controls -->
+                        <div class="input-group mb-3">
+                            <input type="text" id="esp32IP1" class="form-control bg-dark text-light border-purple"
+                                placeholder="ESP32 IP Address" value="10.214.162.171">
+                            <button class="btn btn-purple" onclick="connectToESP32(1)">Connect</button>
+                        </div>
+
+                        <div class="btn-group mb-3 w-100" role="group">
+                            <button class="btn btn-success flex-fill" id="startBtn1" onclick="startTracking(1)"
+                                disabled>Start Scan</button>
+                            <button class="btn btn-danger flex-fill" id="stopBtn1" onclick="stopTracking(1)"
+                                disabled>Stop</button>
+                            <button class="btn btn-secondary flex-fill" id="resetBtn1" onclick="resetSystem(1)"
+                                disabled>Reset</button>
+                            <button class="btn btn-warning flex-fill" id="statusBtn1" onclick="refreshStatus(1)"
+                                disabled>Refresh</button>
+                        </div>
+
+                        <!-- Status Grid -->
+                        <div class="row text-center mb-3">
+                            <div class="col-6 col-md-4 mb-2">
+                                <div class="fw-bold">Status</div>
+                                <div id="systemStatus1">Idle</div>
+                            </div>
+                            <div class="col-6 col-md-4 mb-2">
+                                <div class="fw-bold">Current Angle</div>
+                                <div id="currentAngle1">0°</div>
+                            </div>
+                            <div class="col-6 col-md-4 mb-2">
+                                <div class="fw-bold">Best Angle</div>
+                                <div id="bestAngle1">-</div>
+                            </div>
+                            <div class="col-6 col-md-4 mb-2">
+                                <div class="fw-bold">Best RSSI</div>
+                                <div id="bestRSSI1">- dBm</div>
+                            </div>
+                            <div class="col-6 col-md-4 mb-2">
+                                <div class="fw-bold">LoRa Status</div>
+                                <div id="loraStatus1">Unknown</div>
+                            </div>
+                            <div class="col-6 col-md-4 mb-2">
+                                <div class="fw-bold">WiFi Status</div>
+                                <div id="wifiStatus1">Unknown</div>
+                            </div>
+                        </div>
+
+                        <!-- RSSI Chart -->
+                        <div class="card card-dark mb-3">
+                            <div class="card-header bg-purple" style="color: aliceblue;">
+                                RSSI Chart - Device 1
+                            </div>
+                            <div class="card-body p-3">
+                                <canvas id="rssiChart1" width="400" height="300"></canvas>
+                                <div class="chart-tooltip" id="chartTooltip1"></div>
+                                <div class="chart-placeholder text-center text-muted mt-3" id="chartPlaceholder1">
+                                    Connect and start scanning to see RSSI data
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
                 </div>
             </div>
 
-            <div class="status-card">
-                <h3 class="card-title">System Status</h3>
-                <div class="status-grid">
-                    <div class="status-item">
-                        <div class="status-label">Status</div>
-                        <div class="status-value" id="systemStatus">Idle</div>
+            <!-- Device 2 Panel -->
+            <div class="col-12 col-lg-6">
+                <div class="card shadow-dark card-dark">
+                    <div class="card-header bg-purple text-white">
+                        <h5 class="mb-0">ESP32 Device 2</h5>
                     </div>
-                    <div class="status-item">
-                        <div class="status-label">Current Angle</div>
-                        <div class="status-value" id="currentAngle">0°</div>
-                    </div>
-                    <div class="status-item">
-                        <div class="status-label">Best Angle</div>
-                        <div class="status-value" id="bestAngle">-</div>
-                    </div>
-                    <div class="status-item">
-                        <div class="status-label">Best RSSI</div>
-                        <div class="status-value" id="bestRSSI">- dBm</div>
-                    </div>
-                    <div class="status-item">
-                        <div class="status-label">LoRa Status</div>
-                        <div class="status-value" id="loraStatus">Unknown</div>
-                    </div>
-                    <div class="status-item">
-                        <div class="status-label">WiFi Status</div>
-                        <div class="status-value" id="wifiStatus">Unknown</div>
-                    </div>
-                </div>
-                <div class="progress-container">
-                    <div class="status-label">Scan Progress</div>
-                    <div class="progress-bar">
-                        <div class="progress-fill" id="progressFill"></div>
-                    </div>
-                    <div style="text-align: center; margin-top: 5px; font-size: 0.9rem; color: #666;" id="progressText">
-                        0 / 180</div>
-                </div>
+                    <div class="card-body">
 
-                <div class="servo-control">
-                    <div class="status-label">Manual Servo Control</div>
-                    <input type="range" id="angleSlider" class="angle-slider" min="0" max="180" value="0"
-                        oninput="updateAngleDisplay()" onchange="moveServo()">
-                    <div class="angle-display" id="angleDisplay">0°</div>
+                        <!-- Connection Status -->
+                        <div class="mb-3">
+                            <span class="badge bg-danger" id="connectionStatus2">Disconnected</span>
+                        </div>
+
+                        <!-- Controls -->
+                        <div class="input-group mb-3">
+                            <input type="text" id="esp32IP2" class="form-control bg-dark text-light border-purple"
+                                placeholder="ESP32 IP Address" value="10.214.162.121">
+                            <button class="btn btn-purple" onclick="connectToESP32(2)">Connect</button>
+                        </div>
+
+                        <div class="btn-group mb-3 w-100" role="group">
+                            <button class="btn btn-success flex-fill" id="startBtn2" onclick="startTracking(2)"
+                                disabled>Start Scan</button>
+                            <button class="btn btn-danger flex-fill" id="stopBtn2" onclick="stopTracking(2)"
+                                disabled>Stop</button>
+                            <button class="btn btn-secondary flex-fill" id="resetBtn2" onclick="resetSystem(2)"
+                                disabled>Reset</button>
+                            <button class="btn btn-warning flex-fill" id="statusBtn2" onclick="refreshStatus(2)"
+                                disabled>Refresh</button>
+                        </div>
+
+                        <!-- Status Grid -->
+                        <div class="row text-center mb-3">
+                            <div class="col-6 col-md-4 mb-2">
+                                <div class="fw-bold">Status</div>
+                                <div id="systemStatus2">Idle</div>
+                            </div>
+                            <div class="col-6 col-md-4 mb-2">
+                                <div class="fw-bold">Current Angle</div>
+                                <div id="currentAngle2">0°</div>
+                            </div>
+                            <div class="col-6 col-md-4 mb-2">
+                                <div class="fw-bold">Best Angle</div>
+                                <div id="bestAngle2">-</div>
+                            </div>
+                            <div class="col-6 col-md-4 mb-2">
+                                <div class="fw-bold">Best RSSI</div>
+                                <div id="bestRSSI2">- dBm</div>
+                            </div>
+                            <div class="col-6 col-md-4 mb-2">
+                                <div class="fw-bold">LoRa Status</div>
+                                <div id="loraStatus2">Unknown</div>
+                            </div>
+                            <div class="col-6 col-md-4 mb-2">
+                                <div class="fw-bold">WiFi Status</div>
+                                <div id="wifiStatus2">Unknown</div>
+                            </div>
+                        </div>
+
+                        <!-- RSSI Chart -->
+                        <div class="card card-dark">
+                            <div class="card-header bg-purple" style="color: aliceblue;">
+                                RSSI Chart - Device 2
+                            </div>
+                            <div class="card-body p-3">
+                                <canvas id="rssiChart2" width="400" height="300"></canvas>
+                                <div class="chart-tooltip" id="chartTooltip2"></div>
+                                <div class="chart-placeholder text-center text-muted mt-3" id="chartPlaceholder2">
+                                    Connect and start scanning to see RSSI data
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
                 </div>
             </div>
 
-            <div class="chart-card">
-                <h3 class="card-title">RSSI Chart</h3>
-                <div class="chart-container">
-                    <canvas id="rssiChart" width="400" height="300"></canvas>
-                    <div class="chart-tooltip" id="chartTooltip"></div>
-                    <div class="chart-placeholder" id="chartPlaceholder">
-                        Connect to ESP32 and start scanning to see RSSI data
+            <!-- Distance Calculation Panel -->
+            <div class="col-12 mb-4">
+                <div class="card shadow-dark card-dark">
+                    <div class="card-header bg-purple text-white">
+                        <h5 class="mb-0">Distance Calculation</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label for="baselineDistance" class="form-label">Baseline Distance (d)</label>
+                                <input type="number" id="baselineDistance"
+                                    class="form-control bg-dark text-light border-purple"
+                                    placeholder="Enter distance in meters" step="0.1" min="0.1" value="1">
+                            </div>
+                            <div class="col-md-4 d-flex align-items-end">
+                                <button class="btn btn-purple w-100" onclick="performDistanceCalculation()">
+                                    Calculate Distance
+                                </button>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="text-muted small">
+                                    <div class="fw-bold">Requirements:</div>
+                                    <div>• Both devices must complete scanning</div>
+                                    <div>• Enter baseline distance between devices</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Result Display -->
+                        <div class="mt-3">
+                            <div id="distanceResult">
+                                <div class="alert alert-info">
+                                    Complete scanning on both devices, enter baseline distance, then click Calculate
+                                    Distance.
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <div class="live-log">
-                <h3>Live Updates</h3>
-                <div id="logContainer"></div>
+            <!-- Live Log (full width) -->
+            <div class="col-12">
+                <div class="card shadow-dark card-dark">
+                    <div class="card-header bg-purple text-white">
+                        Live Updates
+                    </div>
+                    <div class="card-body p-3" style="max-height: 300px; overflow-y: auto;">
+                        <div id="logContainer" class="text-monospace"></div>
+                    </div>
+                </div>
             </div>
+
         </div>
     </div>
-    <script src="dashboard.js"></script>
 
+    <!-- Bootstrap JS Bundle -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="dashboard.js"></script>
 </body>
 
 </html>

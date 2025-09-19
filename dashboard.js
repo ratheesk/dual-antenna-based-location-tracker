@@ -1,26 +1,44 @@
-let esp32IP = '';
-let connected = false;
-let chartCanvas = null;
-let chartContext = null;
-let updateInterval = null;
-let rssiData = [];
-let lastStatusUpdate = null;
+// Device management object to handle multiple ESP32s
+const devices = {
+  1: {
+    ip: '',
+    connected: false,
+    chartCanvas: null,
+    chartContext: null,
+    rssiData: [],
+    lastStatusUpdate: null,
+  },
+  2: {
+    ip: '',
+    connected: false,
+    chartCanvas: null,
+    chartContext: null,
+    rssiData: [],
+    lastStatusUpdate: null,
+  },
+};
 
-// Initialize chart
-function initChart() {
-  chartCanvas = document.getElementById('rssiChart');
-  chartContext = chartCanvas.getContext('2d');
-  clearChart();
+// Initialize charts for both devices
+function initChart(deviceId) {
+  const device = devices[deviceId];
+  device.chartCanvas = document.getElementById(`rssiChart${deviceId}`);
+  device.chartContext = device.chartCanvas.getContext('2d');
+  clearChart(deviceId);
 
   // Add mouse interaction
-  chartCanvas.addEventListener('mousemove', handleChartHover);
-  chartCanvas.addEventListener('mouseleave', hideTooltip);
+  device.chartCanvas.addEventListener('mousemove', (event) =>
+    handleChartHover(event, deviceId)
+  );
+  device.chartCanvas.addEventListener('mouseleave', () =>
+    hideTooltip(deviceId)
+  );
 }
 
-function handleChartHover(event) {
-  if (!chartCanvas.chartData) return;
+function handleChartHover(event, deviceId) {
+  const device = devices[deviceId];
+  if (!device.chartCanvas.chartData) return;
 
-  const rect = chartCanvas.getBoundingClientRect();
+  const rect = device.chartCanvas.getBoundingClientRect();
   const x = event.clientX - rect.left;
   const y = event.clientY - rect.top;
 
@@ -28,143 +46,158 @@ function handleChartHover(event) {
   let closestPoint = null;
   let minDistance = Infinity;
 
-  for (const point of chartCanvas.chartData) {
-    const pointX = (point.angle / 180) * chartCanvas.width;
+  for (const point of device.chartCanvas.chartData) {
+    const pointX = (point.angle / 180) * device.chartCanvas.width;
     const pointY =
-      chartCanvas.height -
-      ((point.rssi - chartCanvas.minRSSI) / chartCanvas.rssiRange) *
-        chartCanvas.height;
+      device.chartCanvas.height -
+      ((point.rssi - device.chartCanvas.minRSSI) /
+        device.chartCanvas.rssiRange) *
+        device.chartCanvas.height;
 
     const distance = Math.sqrt(
       Math.pow(x - pointX, 2) + Math.pow(y - pointY, 2)
     );
 
     if (distance < minDistance && distance < 20) {
-      // 20px threshold
       minDistance = distance;
       closestPoint = point;
     }
   }
 
   if (closestPoint) {
-    showTooltip(event, closestPoint);
+    showTooltip(event, closestPoint, deviceId);
   } else {
-    hideTooltip();
+    hideTooltip(deviceId);
   }
 }
 
-function showTooltip(event, point) {
-  const tooltip = document.getElementById('chartTooltip');
+function showTooltip(event, point, deviceId) {
+  const tooltip = document.getElementById(`chartTooltip${deviceId}`);
   tooltip.innerHTML = `Angle: ${point.angle}°<br>RSSI: ${point.rssi} dBm`;
   tooltip.style.opacity = '1';
   tooltip.style.left = event.clientX + 10 + 'px';
   tooltip.style.top = event.clientY - 10 + 'px';
 }
 
-function hideTooltip() {
-  const tooltip = document.getElementById('chartTooltip');
+function hideTooltip(deviceId) {
+  const tooltip = document.getElementById(`chartTooltip${deviceId}`);
   tooltip.style.opacity = '0';
 }
 
-function clearChart() {
-  if (!chartContext) return;
+function clearChart(deviceId) {
+  const device = devices[deviceId];
+  if (!device.chartContext) return;
 
-  chartContext.clearRect(0, 0, chartCanvas.width, chartCanvas.height);
+  const canvas = device.chartCanvas;
+  const ctx = device.chartContext;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   // Draw grid
-  chartContext.strokeStyle = '#e0e0e0';
-  chartContext.lineWidth = 1;
+  ctx.strokeStyle = '#444';
+  ctx.lineWidth = 1;
 
   // Vertical grid lines (every 20 degrees)
   for (let i = 0; i <= 9; i++) {
-    const x = (i * chartCanvas.width) / 9;
-    chartContext.beginPath();
-    chartContext.moveTo(x, 0);
-    chartContext.lineTo(x, chartCanvas.height);
-    chartContext.stroke();
+    const x = (i * canvas.width) / 9;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, canvas.height);
+    ctx.stroke();
   }
 
   // Horizontal grid lines
   for (let i = 0; i <= 10; i++) {
-    const y = (i * chartCanvas.height) / 10;
-    chartContext.beginPath();
-    chartContext.moveTo(0, y);
-    chartContext.lineTo(chartCanvas.width, y);
-    chartContext.stroke();
+    const y = (i * canvas.height) / 10;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(canvas.width, y);
+    ctx.stroke();
   }
 
   // Angle labels (bottom)
-  chartContext.fillStyle = '#666';
-  chartContext.font = '10px Arial';
-  chartContext.textAlign = 'center';
+  ctx.fillStyle = '#888';
+  ctx.font = '10px Arial';
+  ctx.textAlign = 'center';
   for (let i = 0; i <= 9; i++) {
-    const x = (i * chartCanvas.width) / 9;
+    const x = (i * canvas.width) / 9;
     const angle = i * 20;
-    chartContext.fillText(angle + '°', x, chartCanvas.height - 5);
+    ctx.fillText(angle + '°', x, canvas.height - 5);
   }
 
   // RSSI label (left side)
-  chartContext.save();
-  chartContext.translate(15, chartCanvas.height / 2);
-  chartContext.rotate(-Math.PI / 2);
-  chartContext.textAlign = 'center';
-  chartContext.fillText('RSSI (dBm)', 0, 0);
-  chartContext.restore();
+  ctx.save();
+  ctx.translate(15, canvas.height / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = 'center';
+  ctx.fillText('RSSI (dBm)', 0, 0);
+  ctx.restore();
 }
 
-function updateChart(data) {
-  if (!chartContext) return;
+function updateChart(data, deviceId) {
+  const device = devices[deviceId];
+  if (!device.chartContext) return;
 
   // Get results data from ESP32 if scan is complete
   if (data.complete) {
-    fetchAndDisplayResults();
+    fetchAndDisplayResults(deviceId);
     return;
   }
 
   // For ongoing tracking, we'll need to periodically fetch data
   if (data.tracking || data.collecting) {
-    fetchCurrentData();
+    fetchCurrentData(deviceId);
   }
 }
 
-function fetchAndDisplayResults() {
-  fetch(`http://${esp32IP}/api/results`)
+function fetchAndDisplayResults(deviceId) {
+  const device = devices[deviceId];
+  fetch(`http://${device.ip}/api/results`)
     .then((response) => response.json())
     .then((data) => {
       if (data.validReadings && data.validReadings.length > 0) {
-        rssiData = data.validReadings;
-        drawChart(rssiData);
-        document.getElementById('chartPlaceholder').style.display = 'none';
+        device.rssiData = data.validReadings;
+        drawChart(device.rssiData, deviceId);
+        document.getElementById(`chartPlaceholder${deviceId}`).style.display =
+          'none';
         addLog(
-          `Chart updated with ${data.validReadings.length} data points`,
+          `Device ${deviceId}: Chart updated with ${data.validReadings.length} data points`,
           'success'
         );
       } else {
-        addLog('No valid RSSI data found for chart', 'warning');
+        addLog(
+          `Device ${deviceId}: No valid RSSI data found for chart`,
+          'warning'
+        );
       }
     })
     .catch((error) => {
-      console.log('Results fetch error:', error);
-      addLog('Failed to fetch chart data', 'error');
+      console.log(`Device ${deviceId} results fetch error:`, error);
+      addLog(`Device ${deviceId}: Failed to fetch chart data`, 'error');
     });
 }
 
-function fetchCurrentData() {
-  fetch(`http://${esp32IP}/api/data`)
+function fetchCurrentData(deviceId) {
+  const device = devices[deviceId];
+  fetch(`http://${device.ip}/api/data`)
     .then((response) => response.json())
     .then((data) => {
       // This endpoint returns current tracking progress
       // We can use this to show partial chart updates if needed
     })
     .catch((error) => {
-      console.log('Data fetch error:', error);
+      console.log(`Device ${deviceId} data fetch error:`, error);
     });
 }
 
-function drawChart(validData) {
-  if (!chartContext || !validData || validData.length === 0) return;
+function drawChart(validData, deviceId) {
+  const device = devices[deviceId];
+  if (!device.chartContext || !validData || validData.length === 0) return;
 
-  clearChart();
+  clearChart(deviceId);
+
+  const canvas = device.chartCanvas;
+  const ctx = device.chartContext;
 
   // Find min/max for scaling
   const rssiValues = validData.map((d) => d.rssi);
@@ -173,173 +206,179 @@ function drawChart(validData) {
   const rssiRange = maxRSSI - minRSSI || 1;
 
   // Draw RSSI scale on left axis
-  chartContext.fillStyle = '#666';
-  chartContext.font = '10px Arial';
-  chartContext.textAlign = 'right';
+  ctx.fillStyle = '#888';
+  ctx.font = '10px Arial';
+  ctx.textAlign = 'right';
   for (let i = 0; i <= 5; i++) {
     const rssi = minRSSI + (i * rssiRange) / 5;
-    const y = chartCanvas.height - (i * chartCanvas.height) / 5;
-    chartContext.fillText(Math.round(rssi), 30, y + 3);
+    const y = canvas.height - (i * canvas.height) / 5;
+    ctx.fillText(Math.round(rssi), 30, y + 3);
   }
 
   // Draw RSSI line
-  chartContext.strokeStyle = '#667eea';
-  chartContext.lineWidth = 2;
-  chartContext.beginPath();
+  ctx.strokeStyle = '#667eea';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
 
   let firstPoint = true;
   for (const point of validData) {
-    const x = (point.angle / 180) * chartCanvas.width;
+    const x = (point.angle / 180) * canvas.width;
     const y =
-      chartCanvas.height -
-      ((point.rssi - minRSSI) / rssiRange) * chartCanvas.height;
+      canvas.height - ((point.rssi - minRSSI) / rssiRange) * canvas.height;
 
     if (firstPoint) {
-      chartContext.moveTo(x, y);
+      ctx.moveTo(x, y);
       firstPoint = false;
     } else {
-      chartContext.lineTo(x, y);
+      ctx.lineTo(x, y);
     }
   }
-  chartContext.stroke();
+  ctx.stroke();
 
   // Draw points
-  chartContext.fillStyle = '#764ba2';
+  ctx.fillStyle = '#764ba2';
   for (const point of validData) {
-    const x = (point.angle / 180) * chartCanvas.width;
+    const x = (point.angle / 180) * canvas.width;
     const y =
-      chartCanvas.height -
-      ((point.rssi - minRSSI) / rssiRange) * chartCanvas.height;
+      canvas.height - ((point.rssi - minRSSI) / rssiRange) * canvas.height;
 
-    chartContext.beginPath();
-    chartContext.arc(x, y, 4, 0, 2 * Math.PI);
-    chartContext.fill();
+    ctx.beginPath();
+    ctx.arc(x, y, 4, 0, 2 * Math.PI);
+    ctx.fill();
   }
 
   // Store data for tooltip
-  chartCanvas.chartData = validData;
-  chartCanvas.minRSSI = minRSSI;
-  chartCanvas.rssiRange = rssiRange;
+  canvas.chartData = validData;
+  canvas.minRSSI = minRSSI;
+  canvas.rssiRange = rssiRange;
 }
 
-function connectToESP32() {
-  esp32IP = document.getElementById('esp32IP').value.trim();
-  if (!esp32IP) {
-    alert('Please enter ESP32 IP address');
+function connectToESP32(deviceId) {
+  const device = devices[deviceId];
+  device.ip = document.getElementById(`esp32IP${deviceId}`).value.trim();
+
+  if (!device.ip) {
+    alert(`Please enter ESP32 IP address for Device ${deviceId}`);
     return;
   }
 
-  updateConnectionStatus('connecting');
-  addLog('Connecting to ESP32 at ' + esp32IP + '...');
+  updateConnectionStatus('connecting', deviceId);
+  addLog(`Device ${deviceId}: Connecting to ESP32 at ${device.ip}...`);
 
   // Test connection
-  fetch(`http://${esp32IP}/`, { method: 'GET', timeout: 5000 })
+  fetch(`http://${device.ip}/`, { method: 'GET' })
     .then((response) => {
       if (response.ok) {
-        updateConnectionStatus('connected');
-        addLog('Connected to ESP32 successfully!', 'success');
-        connected = true;
-        updateButtons();
-        startStatusUpdates();
+        updateConnectionStatus('connected', deviceId);
+        addLog(
+          `Device ${deviceId}: Connected to ESP32 successfully!`,
+          'success'
+        );
+        device.connected = true;
+        updateButtons(deviceId);
+        startStatusUpdates(deviceId);
       } else {
         throw new Error('Invalid response');
       }
     })
     .catch((error) => {
-      updateConnectionStatus('disconnected');
-      addLog('Connection failed: ' + error.message, 'error');
-      connected = false;
-      updateButtons();
-      stopStatusUpdates();
+      updateConnectionStatus('disconnected', deviceId);
+      addLog(
+        `Device ${deviceId}: Connection failed: ${error.message}`,
+        'error'
+      );
+      device.connected = false;
+      updateButtons(deviceId);
+      stopStatusUpdates(deviceId);
     });
 }
 
-function startStatusUpdates() {
-  // Remove automatic polling - user will manually refresh status
+function startStatusUpdates(deviceId) {
   // Initial status fetch only
-  fetchStatus();
+  fetchStatus(deviceId);
 }
 
-function stopStatusUpdates() {
+function stopStatusUpdates(deviceId) {
   // No intervals to clear since we removed automatic polling
 }
 
-function refreshStatus() {
-  if (!connected) return;
+function refreshStatus(deviceId) {
+  const device = devices[deviceId];
+  if (!device.connected) return;
 
-  addLog('Refreshing status...', 'info');
-  fetchStatus();
+  addLog(`Device ${deviceId}: Refreshing status...`, 'info');
+  fetchStatus(deviceId);
 }
 
-function fetchStatus() {
-  const indicator = document.getElementById('updateIndicator');
-  indicator.classList.add('active');
+function fetchStatus(deviceId) {
+  const device = devices[deviceId];
 
-  fetch(`http://${esp32IP}/api/status`)
+  fetch(`http://${device.ip}/api/status`)
     .then((response) => response.json())
     .then((data) => {
-      updateStatus(data);
+      updateStatus(data, deviceId);
 
       // If scan is complete, also fetch and plot the results
       if (data.complete) {
-        fetchAndDisplayResults();
+        fetchAndDisplayResults(deviceId);
       }
 
       // Check for status changes
       const currentStatusString = JSON.stringify(data);
-      if (lastStatusUpdate !== currentStatusString) {
+      if (device.lastStatusUpdate !== currentStatusString) {
         if (data.status === 'tracking') {
-          addLog(`Scanning angle ${data.currentAngle}°...`, 'info');
+          addLog(
+            `Device ${deviceId}: Scanning angle ${data.currentAngle}°...`,
+            'info'
+          );
         } else if (
           data.complete &&
-          lastStatusUpdate &&
-          !JSON.parse(lastStatusUpdate).complete
+          device.lastStatusUpdate &&
+          !JSON.parse(device.lastStatusUpdate).complete
         ) {
           addLog(
-            `Scan complete! Best angle: ${data.bestAngle}°, Best RSSI: ${data.bestRSSI} dBm`,
+            `Device ${deviceId}: Scan complete! Best angle: ${data.bestAngle}°, Best RSSI: ${data.bestRSSI} dBm`,
             'success'
           );
         }
-        lastStatusUpdate = currentStatusString;
+        device.lastStatusUpdate = currentStatusString;
       }
-
-      setTimeout(() => {
-        indicator.classList.remove('active');
-      }, 200);
     })
     .catch((error) => {
-      console.log('Status fetch error:', error);
+      console.log(`Device ${deviceId} status fetch error:`, error);
       if (error.message.includes('Failed to fetch')) {
-        updateConnectionStatus('disconnected');
-        connected = false;
-        updateButtons();
-        stopStatusUpdates();
-        addLog('Connection lost to ESP32', 'error');
+        updateConnectionStatus('disconnected', deviceId);
+        device.connected = false;
+        updateButtons(deviceId);
+        stopStatusUpdates(deviceId);
+        addLog(`Device ${deviceId}: Connection lost to ESP32`, 'error');
       }
-      indicator.classList.remove('active');
     });
 }
 
-function updateConnectionStatus(status) {
-  const statusEl = document.getElementById('connectionStatus');
-  statusEl.className = 'connection-status ' + status;
+function updateConnectionStatus(status, deviceId) {
+  const statusEl = document.getElementById(`connectionStatus${deviceId}`);
+
+  // Remove existing classes
+  statusEl.className = 'badge';
 
   switch (status) {
     case 'connected':
+      statusEl.classList.add('bg-success');
       statusEl.textContent = 'Connected';
       break;
     case 'connecting':
+      statusEl.classList.add('bg-warning');
       statusEl.textContent = 'Connecting...';
-      statusEl.classList.add('pulse');
       break;
     case 'disconnected':
+      statusEl.classList.add('bg-danger');
       statusEl.textContent = 'Disconnected';
-      statusEl.classList.remove('pulse');
       break;
   }
 }
 
-function updateStatus(data) {
+function updateStatus(data, deviceId) {
   // Update system status - handle tracking vs collecting properly
   let displayStatus = data.status;
   if (data.tracking || data.collecting) {
@@ -348,137 +387,110 @@ function updateStatus(data) {
     displayStatus = 'complete';
   }
 
-  document.getElementById('systemStatus').textContent =
+  document.getElementById(`systemStatus${deviceId}`).textContent =
     displayStatus.charAt(0).toUpperCase() + displayStatus.slice(1);
-  document.getElementById('currentAngle').textContent = data.currentAngle + '°';
+  document.getElementById(`currentAngle${deviceId}`).textContent =
+    data.currentAngle + '°';
 
   // Update LoRa and WiFi status
-  document.getElementById('loraStatus').textContent = data.loraActive
-    ? 'Active'
-    : 'Inactive';
-  document.getElementById('loraStatus').style.color = data.loraActive
-    ? '#4CAF50'
-    : '#f44336';
+  const loraStatusEl = document.getElementById(`loraStatus${deviceId}`);
+  loraStatusEl.textContent = data.loraActive ? 'Active' : 'Inactive';
+  loraStatusEl.style.color = data.loraActive ? '#4CAF50' : '#f44336';
 
-  document.getElementById('wifiStatus').textContent = data.wifiConnected
-    ? 'Connected'
-    : 'Disconnected';
-  document.getElementById('wifiStatus').style.color = data.wifiConnected
-    ? '#4CAF50'
-    : '#f44336';
+  const wifiStatusEl = document.getElementById(`wifiStatus${deviceId}`);
+  wifiStatusEl.textContent = data.wifiConnected ? 'Connected' : 'Disconnected';
+  wifiStatusEl.style.color = data.wifiConnected ? '#4CAF50' : '#f44336';
 
   // Update best results
   if (data.bestAngle >= 0) {
-    document.getElementById('bestAngle').textContent = data.bestAngle + '°';
-    document.getElementById('bestRSSI').textContent = data.bestRSSI + ' dBm';
+    document.getElementById(`bestAngle${deviceId}`).textContent =
+      data.bestAngle + '°';
+    document.getElementById(`bestRSSI${deviceId}`).textContent =
+      data.bestRSSI + ' dBm';
   }
 
-  updateProgress(data.progress, data.maxAngle);
-  updateButtons();
-
-  // Update servo slider to match current angle
-  document.getElementById('angleSlider').value = data.currentAngle;
-  document.getElementById('angleDisplay').textContent = data.currentAngle + '°';
+  updateButtons(deviceId);
 }
 
-function updateProgress(current, max) {
-  const percentage = (current / max) * 100;
-  document.getElementById('progressFill').style.width = percentage + '%';
-  document.getElementById('progressText').textContent = current + ' / ' + max;
-}
-
-function updateButtons() {
-  const startBtn = document.getElementById('startBtn');
-  const stopBtn = document.getElementById('stopBtn');
-  const resetBtn = document.getElementById('resetBtn');
-  const statusBtn = document.getElementById('statusBtn');
+function updateButtons(deviceId) {
+  const device = devices[deviceId];
+  const startBtn = document.getElementById(`startBtn${deviceId}`);
+  const stopBtn = document.getElementById(`stopBtn${deviceId}`);
+  const resetBtn = document.getElementById(`resetBtn${deviceId}`);
+  const statusBtn = document.getElementById(`statusBtn${deviceId}`);
 
   const status = document
-    .getElementById('systemStatus')
+    .getElementById(`systemStatus${deviceId}`)
     .textContent.toLowerCase();
 
-  startBtn.disabled = !connected || status === 'tracking';
-  stopBtn.disabled = !connected || status !== 'tracking';
-  resetBtn.disabled = !connected;
-  statusBtn.disabled = !connected;
+  startBtn.disabled = !device.connected || status === 'scanning';
+  stopBtn.disabled = !device.connected || status !== 'scanning';
+  resetBtn.disabled = !device.connected;
+  statusBtn.disabled = !device.connected;
 }
 
-function startTracking() {
-  if (!connected) return;
+function startTracking(deviceId) {
+  const device = devices[deviceId];
+  if (!device.connected) return;
 
-  fetch(`http://${esp32IP}/api/start`, { method: 'POST' })
+  fetch(`http://${device.ip}/api/start`, { method: 'POST' })
     .then((response) => response.json())
     .then((data) => {
       if (data.success) {
-        addLog('Tracking started!', 'success');
-        // Show instructions
-        document.getElementById('instructions').style.display = 'block';
-        rssiData = [];
-        clearChart();
-        document.getElementById('chartPlaceholder').textContent =
+        addLog(`Device ${deviceId}: Tracking started!`, 'success');
+        device.rssiData = [];
+        clearChart(deviceId);
+        document.getElementById(`chartPlaceholder${deviceId}`).textContent =
           'Scanning in progress...';
-        document.getElementById('chartPlaceholder').style.display = 'flex';
+        document.getElementById(`chartPlaceholder${deviceId}`).style.display =
+          'flex';
       } else {
-        addLog('Failed to start tracking: ' + data.message, 'error');
+        addLog(
+          `Device ${deviceId}: Failed to start tracking: ${data.message}`,
+          'error'
+        );
       }
     })
-    .catch((error) => addLog('Error: ' + error.message, 'error'));
+    .catch((error) =>
+      addLog(`Device ${deviceId}: Error: ${error.message}`, 'error')
+    );
 }
 
-function stopTracking() {
-  if (!connected) return;
+function stopTracking(deviceId) {
+  const device = devices[deviceId];
+  if (!device.connected) return;
 
-  fetch(`http://${esp32IP}/api/stop`, { method: 'POST' })
+  fetch(`http://${device.ip}/api/stop`, { method: 'POST' })
     .then((response) => response.json())
     .then((data) => {
-      addLog('Tracking stopped', 'warning');
+      addLog(`Device ${deviceId}: Tracking stopped`, 'warning');
     })
-    .catch((error) => addLog('Error: ' + error.message, 'error'));
+    .catch((error) =>
+      addLog(`Device ${deviceId}: Error: ${error.message}`, 'error')
+    );
 }
 
-function resetSystem() {
-  if (!connected) return;
+function resetSystem(deviceId) {
+  const device = devices[deviceId];
+  if (!device.connected) return;
 
-  fetch(`http://${esp32IP}/api/reset`, { method: 'POST' })
+  fetch(`http://${device.ip}/api/reset`, { method: 'POST' })
     .then((response) => response.json())
     .then((data) => {
-      addLog('System reset', 'info');
-      rssiData = [];
-      clearChart();
-      document.getElementById('chartPlaceholder').textContent =
-        'Connect to ESP32 and start scanning to see RSSI data';
-      document.getElementById('chartPlaceholder').style.display = 'flex';
+      addLog(`Device ${deviceId}: System reset`, 'info');
+      device.rssiData = [];
+      clearChart(deviceId);
+      document.getElementById(`chartPlaceholder${deviceId}`).textContent =
+        'Connect and start scanning to see RSSI data';
+      document.getElementById(`chartPlaceholder${deviceId}`).style.display =
+        'flex';
       // Reset displayed values
-      document.getElementById('bestAngle').textContent = '-';
-      document.getElementById('bestRSSI').textContent = '- dBm';
+      document.getElementById(`bestAngle${deviceId}`).textContent = '-';
+      document.getElementById(`bestRSSI${deviceId}`).textContent = '- dBm';
     })
-    .catch((error) => addLog('Error: ' + error.message, 'error'));
-}
-
-function updateAngleDisplay() {
-  const angle = document.getElementById('angleSlider').value;
-  document.getElementById('angleDisplay').textContent = angle + '°';
-}
-
-function moveServo() {
-  if (!connected) return;
-
-  const angle = parseInt(document.getElementById('angleSlider').value);
-
-  fetch(`http://${esp32IP}/api/servo`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ angle: angle }),
-  })
-    .then((response) => response.json())
-    .then((data) => {
-      if (data.success) {
-        addLog(`Servo moved to ${angle}°`, 'info');
-      } else {
-        addLog('Servo move failed: ' + data.message, 'error');
-      }
-    })
-    .catch((error) => addLog('Error: ' + error.message, 'error'));
+    .catch((error) =>
+      addLog(`Device ${deviceId}: Error: ${error.message}`, 'error')
+    );
 }
 
 function addLog(message, type = 'info') {
@@ -505,27 +517,140 @@ function addLog(message, type = 'info') {
   }
 
   logEntry.innerHTML = `
-                <span class="timestamp">${timestamp}</span> 
-                <span style="color: ${color}">${message}</span>
-            `;
+        <span class="timestamp" style="color: #888;">[${timestamp}]</span> 
+        <span style="color: ${color}">${message}</span>
+    `;
 
   logContainer.appendChild(logEntry);
   logContainer.scrollTop = logContainer.scrollHeight;
 
-  // Keep only last 50 entries
-  while (logContainer.children.length > 50) {
+  // Keep only last 100 entries
+  while (logContainer.children.length > 100) {
     logContainer.removeChild(logContainer.firstChild);
   }
 }
 
+// Distance calculation function
+function calculateDistance(d, theta1, theta2) {
+  // Convert degrees to radians
+  const theta1Rad = theta1 * (Math.PI / 180.0);
+  const theta2Rad = theta2 * (Math.PI / 180.0);
+
+  // Calculate the distance using the provided formula
+  // Note: This formula appears to have some mathematical issues with the trigonometry
+  // The (180 - theta2) terms will give negative angles, which may not be intended
+  const denominator =
+    Math.cos(theta1Rad) +
+    Math.sin(theta1Rad) /
+      (Math.sin(Math.PI - theta2Rad) * Math.cos(Math.PI - theta2Rad));
+
+  if (Math.abs(denominator) < 0.0001) {
+    return null; // Avoid division by zero
+  }
+
+  return d / denominator;
+}
+
+function performDistanceCalculation() {
+  const d = parseFloat(document.getElementById('baselineDistance').value);
+  const device1BestAngle = devices[1].connected
+    ? parseInt(
+        document.getElementById('bestAngle1').textContent.replace('°', '')
+      )
+    : null;
+  const device2BestAngle = devices[2].connected
+    ? parseInt(
+        document.getElementById('bestAngle2').textContent.replace('°', '')
+      )
+    : null;
+
+  // Validation
+  if (isNaN(d) || d <= 0) {
+    document.getElementById('distanceResult').innerHTML =
+      '<div class="alert alert-danger">Please enter a valid baseline distance (d > 0)</div>';
+    return;
+  }
+
+  if (
+    !device1BestAngle ||
+    device1BestAngle === '-' ||
+    !device2BestAngle ||
+    device2BestAngle === '-'
+  ) {
+    document.getElementById('distanceResult').innerHTML =
+      '<div class="alert alert-warning">Both devices must complete scanning to calculate distance</div>';
+    return;
+  }
+
+  if (isNaN(device1BestAngle) || isNaN(device2BestAngle)) {
+    document.getElementById('distanceResult').innerHTML =
+      '<div class="alert alert-warning">Invalid angle data from devices</div>';
+    return;
+  }
+
+  // Calculate distance
+  const distance = calculateDistance(d, device1BestAngle, device2BestAngle);
+
+  if (distance === null) {
+    document.getElementById('distanceResult').innerHTML =
+      '<div class="alert alert-danger">Mathematical error: Division by zero in calculation</div>';
+    return;
+  }
+
+  if (!isFinite(distance)) {
+    document.getElementById('distanceResult').innerHTML =
+      '<div class="alert alert-danger">Mathematical error: Invalid result</div>';
+    return;
+  }
+
+  // Display result
+  document.getElementById('distanceResult').innerHTML = `
+     <div class="alert alert-success" style="background-color: #1a4d3a; border-color: #4CAF50; color: #ffffff;">
+            <h6 class="mb-2" style="color: #ffffff;">Distance Calculation Result:</h6>
+            <div class="row text-center">
+                <div class="col-4">
+                    <div class="fw-bold" style="color: #aaa;">Device 1 Angle</div>
+                    <div style="color: #ffffff;">${device1BestAngle}°</div>
+                </div>
+                <div class="col-4">
+                    <div class="fw-bold" style="color: #aaa;">Device 2 Angle</div>
+                    <div style="color: #ffffff;">${device2BestAngle}°</div>
+                </div>
+                <div class="col-4">
+                    <div class="fw-bold" style="color: #aaa;">Calculated Distance</div>
+                    <div class="fw-bold" style="color: #4CAF50; font-size: 1.1rem;">${distance.toFixed(
+                      2
+                    )} units</div>
+                </div>
+            </div>
+        </div>
+        `;
+
+  addLog(
+    `Distance calculated: ${distance.toFixed(
+      2
+    )} units (using angles ${device1BestAngle}° and ${device2BestAngle}°)`,
+    'success'
+  );
+}
+
 // Initialize
 document.addEventListener('DOMContentLoaded', function () {
-  initChart();
-  updateButtons();
-  addLog('Dashboard ready. Enter ESP32 IP and click Connect.');
+  // Initialize charts for both devices
+  initChart(1);
+  initChart(2);
+
+  // Update buttons for both devices
+  updateButtons(1);
+  updateButtons(2);
+
+  addLog(
+    'Dashboard ready. Enter ESP32 IP addresses and click Connect for each device.'
+  );
 });
 
 // Cleanup on page unload
 window.addEventListener('beforeunload', function () {
-  stopStatusUpdates();
+  stopStatusUpdates(1);
+  stopStatusUpdates(2);
 });
