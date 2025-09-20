@@ -7,8 +7,8 @@
 // ------------------------
 // WiFi Configuration
 // ------------------------
-const char* ssid = "";
-const char* password = "";
+const char* ssid = "GTCY";
+const char* password = "GladToConnectYou";
 WiFiServer server(80);
 
 // ------------------------
@@ -16,6 +16,7 @@ WiFiServer server(80);
 // ------------------------
 #define LORA_ACTIVE_LED 21
 #define SIGNAL_RECEIVED_LED 22
+#define WIFI_STATUS_LED 23  // Optional: Add LED to show WiFi status
 Servo myservo;
 int servoPin = 33;
 int angle = 0;
@@ -32,6 +33,7 @@ bool collecting = false;
 bool trackingComplete = false;
 bool minimumDetected = false;
 bool loraInitialized = false;
+bool wifiEnabled = true;  // Track WiFi state
 
 // ------------------------
 // Data Collection
@@ -59,13 +61,15 @@ void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   pinMode(LORA_ACTIVE_LED, OUTPUT);
   pinMode(SIGNAL_RECEIVED_LED, OUTPUT);
+  #ifdef WIFI_STATUS_LED
+  pinMode(WIFI_STATUS_LED, OUTPUT);
+  #endif
 
   // Connect to WiFi
   connectToWiFi();
   
   // Start web server
   server.begin();
-  Serial.println("✅ API Server Started");
   printServerInfo();
 
   // Initialize LoRa
@@ -87,23 +91,25 @@ void setup() {
 }
 
 void loop() {
-  // Monitor WiFi connection
-  unsigned long currentMillis = millis();
-  if (currentMillis - previousMillis >= interval) {
-    previousMillis = currentMillis;
-    if (WiFi.status() != WL_CONNECTED) {
-      Serial.println("⚠️ WiFi disconnected! Reconnecting...");
-      connectToWiFi();
-    } else {
-      digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+  // Only monitor WiFi connection when WiFi is enabled and not tracking
+  if (wifiEnabled && !collecting) {
+    unsigned long currentMillis = millis();
+    if (currentMillis - previousMillis >= interval) {
+      previousMillis = currentMillis;
+      if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("⚠️ WiFi disconnected! Reconnecting...");
+        connectToWiFi();
+      } else {
+        digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+      }
     }
-  }
 
-  // Handle API requests
-  WiFiClient client = server.available();
-  if (client) {
-    clientCount++;
-    handleApiRequest(client);
+    // Handle API requests only when WiFi is enabled
+    WiFiClient client = server.available();
+    if (client) {
+      clientCount++;
+      handleApiRequest(client);
+    }
   }
 
   // Handle antenna tracking logic
@@ -115,6 +121,35 @@ void loop() {
   // Turn off signal LED after delay
   if (millis() - lastSignalTime > 200) {
     digitalWrite(SIGNAL_RECEIVED_LED, LOW);
+  }
+}
+
+void enableWiFi() {
+  if (!wifiEnabled) {
+    Serial.println("🔌 Enabling WiFi...");
+    WiFi.mode(WIFI_STA);
+    connectToWiFi();
+    server.begin();
+    wifiEnabled = true;
+    #ifdef WIFI_STATUS_LED
+    digitalWrite(WIFI_STATUS_LED, HIGH);
+    #endif
+    Serial.println("✅ WiFi enabled and server restarted");
+  }
+}
+
+void disableWiFi() {
+  if (wifiEnabled) {
+    Serial.println("🔇 Disabling WiFi to save power during tracking...");
+    server.stop();
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    wifiEnabled = false;
+    digitalWrite(LED_BUILTIN, LOW);
+    #ifdef WIFI_STATUS_LED
+    digitalWrite(WIFI_STATUS_LED, LOW);
+    #endif
+    Serial.println("✅ WiFi disabled - Power saving mode active");
   }
 }
 
@@ -243,6 +278,8 @@ void sendStatusResponse(WiFiClient client) {
   doc["bestRSSI"] = (middleMinIndex >= 0) ? rssiValues[middleMinIndex] : -999;
   doc["loraActive"] = loraInitialized;
   doc["wifiConnected"] = (WiFi.status() == WL_CONNECTED);
+  doc["wifiEnabled"] = wifiEnabled;
+  doc["powerSaving"] = !wifiEnabled;
   doc["clientCount"] = clientCount;
   
   String response;
@@ -288,8 +325,9 @@ void handleStartCommand(WiFiClient client, String body) {
   } else if (!isTracking) {
     startTracking();
     doc["success"] = true;
-    doc["message"] = "Antenna tracking started";
+    doc["message"] = "Antenna tracking started - WiFi will be disabled for power saving";
     doc["status"] = "tracking";
+    doc["powerSaving"] = true;
   } else {
     doc["success"] = false;
     doc["message"] = "Tracking already in progress";
@@ -306,8 +344,9 @@ void handleStopCommand(WiFiClient client) {
   
   stopTracking();
   doc["success"] = true;
-  doc["message"] = "Tracking stopped";
+  doc["message"] = "Tracking stopped - WiFi re-enabled";
   doc["status"] = getSystemStatus();
+  doc["powerSaving"] = false;
   
   String response;
   serializeJson(doc, response);
@@ -319,8 +358,9 @@ void handleResetCommand(WiFiClient client) {
   
   resetSystem();
   doc["success"] = true;
-  doc["message"] = "System reset";
+  doc["message"] = "System reset - WiFi re-enabled";
   doc["status"] = getSystemStatus();
+  doc["powerSaving"] = false;
   
   String response;
   serializeJson(doc, response);
@@ -341,6 +381,9 @@ void sendError(WiFiClient client, String message, int code) {
 void handleAntennaTracking() {
   // Start tracking sequence
   if (isTracking && !collecting && !trackingComplete) {
+    // Disable WiFi before starting collection to save power
+    disableWiFi();
+    
     // Start collection immediately
     collecting = true;
     dataIndex = 0;
@@ -348,7 +391,7 @@ void handleAntennaTracking() {
     trackingComplete = false;
     angle = 0; // Start from 0 degrees
     myservo.write(angle);
-    Serial.println("🔴 Tracking initiated - Starting antenna scan...");
+    Serial.println("🔴 Tracking initiated - Starting antenna scan in power saving mode...");
     
     // Initialize data arrays
     for (int i = 0; i < MAX_THETA; i++) {
@@ -412,17 +455,17 @@ void handleAntennaTracking() {
     // Store the result
     if (packetReceived) {
       rssiValues[angle] = bestRSSIAtAngle;
-      Serial.println("📊 Angle " + String(angle) + "°: RSSI " + String(bestRSSIAtAngle) + " dBm (after " + String(packetCount) + " packets)");
     } else {
       rssiValues[angle] = -999; // Timeout occurred
-      Serial.println(" ⏰ TIMEOUT - No signal received after " + String(MAX_WAIT_TIME/1000) + " seconds");
     }
     
     // Move to next angle
     angle += SERVO_STEP;
     if (angle >= MAX_THETA) {
-      Serial.println("✅ Scan complete, processing results...");
       processTrackingResults();
+      
+      // Re-enable WiFi after tracking is complete
+      enableWiFi();
     }
     
     // Reduced delay for faster movement
@@ -462,41 +505,10 @@ void processTrackingResults() {
       validReadings++;
     }
   }
-  
-  Serial.println("\n📊 === TRACKING COMPLETE ===");
-  Serial.println("Valid readings: " + String(validReadings) + "/" + String(MAX_THETA));
 
   // Find the best angle (middle of minimum values - strongest signal)
   middleMinIndex = findMiddleIndexOfMin(rssiValues, MAX_THETA);
   
-  if (middleMinIndex >= 0) {
-    Serial.println("Final Results:");
-    Serial.print("Best Angle: ");
-    Serial.print(middleMinIndex);
-    Serial.println("°");
-    Serial.print("Best RSSI: ");
-    Serial.print(rssiValues[middleMinIndex]);
-    Serial.println(" dBm");
-    
-    // Keep antenna at final position (180°)
-    Serial.println("🎯 Scan complete! Antenna remains at 180° position.");
-  } else {
-    Serial.println("❌ No valid readings found - cannot determine best angle");
-  }
-  
-  // Print complete array (only non-999 values for cleaner output)
-  Serial.println("\nComplete RSSI Array (Valid readings only):");
-  Serial.print("[");
-  bool first = true;
-  for (int i = 0; i < MAX_THETA; i++) {
-    if (rssiValues[i] != -999) {
-      if (!first) Serial.print(",");
-      Serial.print("(" + String(i) + "°:" + String(rssiValues[i]) + ")");
-      first = false;
-    }
-  }
-  Serial.println("]");
-  Serial.println("Middle Index: " + String(middleMinIndex));
 }
 
 void moveServoToAngle(int targetAngle) {
@@ -535,7 +547,6 @@ int findMiddleIndexOfMin(int arr[], int length) {
     }
   }
 
-  Serial.println("Found " + String(maxCount) + " angles with best RSSI (" + String(maxVal) + " dBm)");
   
   // Return middle index
   return maxIndices[maxCount / 2];
@@ -557,6 +568,9 @@ void connectToWiFi() {
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println("\n✅ Wi-Fi Connected!");
     digitalWrite(LED_BUILTIN, HIGH);
+    #ifdef WIFI_STATUS_LED
+    digitalWrite(WIFI_STATUS_LED, HIGH);
+    #endif
   } else {
     Serial.println("\n❌ Wi-Fi Connection Failed!");
     delay(5000);
@@ -572,14 +586,16 @@ void startTracking() {
   angle = 0;
   dataIndex = 0;
   middleMinIndex = -1;
-  Serial.println("🚀 Tracking initiated!");
 }
 
 void stopTracking() {
   isTracking = false;
   collecting = false;
   servoRotating = false;
-  Serial.println("⏹️ Tracking stopped by user");
+  
+  // Re-enable WiFi when tracking is stopped
+  enableWiFi();
+  
 }
 
 void resetSystem() {
@@ -598,7 +614,8 @@ void resetSystem() {
   for (int i = 0; i < MAX_THETA; i++) {
     rssiValues[i] = -999;
   }
-  Serial.println("✅ System reset complete");
+  
+  
 }
 
 String getSystemStatus() {
@@ -617,5 +634,8 @@ void printServerInfo() {
   Serial.println(" • POST /api/reset     - Reset system");
   Serial.println(" • GET  /api/results   - Get tracking results");
   Serial.println(" • GET  /ping          - Health check");
+  Serial.println("⚡ Power Management:");
+  Serial.println(" • WiFi automatically disabled during tracking");
+  Serial.println(" • WiFi re-enabled when tracking completes");
   Serial.println();
 }
