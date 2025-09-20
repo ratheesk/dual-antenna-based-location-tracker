@@ -62,3 +62,11 @@ In receiver.ino:
 - `MAX_WAIT_TIME = 5000` - How long to wait for signal
 - `SERVO_STEP = 1` - Degrees to move each step
 - WiFi name and password
+
+## Mosquitto
+
+start mosquitto
+
+```bash
+mosquitto -c "C:\Program Files\mosquitto\mosquitto.conf" -v
+```

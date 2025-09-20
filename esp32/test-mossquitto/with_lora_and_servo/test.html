@@ -1,0 +1,899 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 LoRa Tracker Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #2196F3 0%, #21CBF3 100%);
+            color: white;
+            padding: 20px 30px;
+            text-align: center;
+            position: relative;
+        }
+
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse"><path d="M 10 0 L 0 0 0 10" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1"/></pattern></defs><rect width="100" height="100" fill="url(%23grid)"/></svg>');
+            opacity: 0.3;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: bold;
+            margin: 5px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .status-connected {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .status-disconnected {
+            background: #f44336;
+            color: white;
+        }
+
+        .status-tracking {
+            background: #FF9800;
+            color: white;
+        }
+
+        .status-idle {
+            background: #9E9E9E;
+            color: white;
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            padding: 30px;
+        }
+
+        .control-panel {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(0, 0, 0, 0.05);
+        }
+
+        .control-panel h3 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.4em;
+            border-bottom: 2px solid #2196F3;
+            padding-bottom: 10px;
+        }
+
+        .button-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .btn {
+            padding: 15px 20px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #4CAF50, #45a049);
+            color: white;
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #f44336, #d32f2f);
+            color: white;
+        }
+
+        .btn-warning {
+            background: linear-gradient(135deg, #FF9800, #f57c00);
+            color: white;
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, #9E9E9E, #757575);
+            color: white;
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .status-item {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 10px;
+            border-left: 4px solid #2196F3;
+        }
+
+        .status-item .label {
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 5px;
+        }
+
+        .status-item .value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .chart-container {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+            height: 450px;
+            position: relative;
+        }
+
+        .chart-wrapper {
+            position: relative;
+            height: 350px;
+            width: 100%;
+        }
+
+        .data-section {
+            grid-column: 1 / -1;
+        }
+
+        .log-container {
+            background: #1a1a1a;
+            border-radius: 10px;
+            padding: 20px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            color: #00ff00;
+            margin-top: 20px;
+        }
+
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 5px;
+            border-radius: 3px;
+        }
+
+        .log-info {
+            color: #00ff00;
+        }
+
+        .log-warning {
+            color: #ffaa00;
+            background: rgba(255, 170, 0, 0.1);
+        }
+
+        .log-error {
+            color: #ff4444;
+            background: rgba(255, 68, 68, 0.1);
+        }
+
+        .log-data {
+            color: #00aaff;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #e0e0e0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 15px 0;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4CAF50, #45a049);
+            width: 0%;
+            transition: width 0.3s ease;
+            position: relative;
+        }
+
+        .progress-fill::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+            animation: shimmer 2s infinite;
+        }
+
+        @keyframes shimmer {
+            0% {
+                transform: translateX(-100%);
+            }
+
+            100% {
+                transform: translateX(100%);
+            }
+        }
+
+        .connection-status {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            padding: 10px 15px;
+            border-radius: 25px;
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        .data-table th,
+        .data-table td {
+            padding: 12px;
+            text-align: center;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .data-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .data-table tr:hover {
+            background: #f8f9fa;
+        }
+
+        .best-angle {
+            background: linear-gradient(135deg, #4CAF50, #45a049) !important;
+            color: white;
+            font-weight: bold;
+        }
+
+        @media (max-width: 768px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+                padding: 15px;
+            }
+
+            .button-group {
+                grid-template-columns: 1fr;
+            }
+
+            .status-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .chart-container {
+                height: 350px;
+            }
+
+            .chart-wrapper {
+                height: 250px;
+            }
+
+            .header h1 {
+                font-size: 1.8em;
+            }
+
+            .connection-status {
+                position: relative;
+                top: 0;
+                right: 0;
+                margin: 10px 0;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .chart-container {
+                height: 300px;
+                padding: 15px;
+            }
+
+            .chart-wrapper {
+                height: 200px;
+            }
+
+            .header {
+                padding: 15px 20px;
+            }
+
+            .dashboard-grid {
+                padding: 10px;
+                gap: 15px;
+            }
+
+            .control-panel {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 ESP32 LoRa Tracker Dashboard</h1>
+            <div id="connectionStatus" class="connection-status status-disconnected">MQTT Disconnected</div>
+            <div>
+                <span id="mqttStatus" class="status-badge status-disconnected">MQTT: Disconnected</span>
+                <span id="systemStatus" class="status-badge status-idle">System: Idle</span>
+                <span id="loraStatus" class="status-badge status-disconnected">LoRa: Unknown</span>
+            </div>
+        </div>
+
+        <div class="dashboard-grid">
+            <!-- Control Panel -->
+            <div class="control-panel">
+                <h3>🎮 Control Panel</h3>
+                <div class="button-group">
+                    <button id="startBtn" class="btn btn-primary" onclick="startTracking()">
+                        🚀 Start Tracking
+                    </button>
+                    <button id="stopBtn" class="btn btn-danger" onclick="stopTracking()">
+                        ⏹️ Stop Tracking
+                    </button>
+                    <button id="resetBtn" class="btn btn-warning" onclick="resetSystem()">
+                        🔄 Reset System
+                    </button>
+                    <button id="ledToggle" class="btn btn-secondary" onclick="toggleLED()">
+                        💡 Toggle LED
+                    </button>
+                </div>
+
+                <div class="status-grid">
+                    <div class="status-item">
+                        <div class="label">Current Angle</div>
+                        <div id="currentAngle" class="value">0°</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="label">Progress</div>
+                        <div id="progressPercent" class="value">0%</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="label">Best Angle</div>
+                        <div id="bestAngle" class="value">-</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="label">Best RSSI</div>
+                        <div id="bestRSSI" class="value">- dBm</div>
+                    </div>
+                </div>
+
+                <div class="progress-bar">
+                    <div id="progressBar" class="progress-fill"></div>
+                </div>
+            </div>
+
+            <!-- Live Chart -->
+            <div class="chart-container">
+                <h3>📊 Live RSSI Chart</h3>
+                <div class="chart-wrapper">
+                    <canvas id="rssiChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Data Section -->
+            <div class="control-panel data-section">
+                <h3>📡 Live LoRa Data</h3>
+                <div id="liveDataContainer">
+                    <div class="status-grid">
+                        <div class="status-item">
+                            <div class="label">Last RSSI</div>
+                            <div id="lastRSSI" class="value">- dBm</div>
+                        </div>
+                        <div class="status-item">
+                            <div class="label">Last SNR</div>
+                            <div id="lastSNR" class="value">- dB</div>
+                        </div>
+                        <div class="status-item">
+                            <div class="label">Packets Received</div>
+                            <div id="packetCount" class="value">0</div>
+                        </div>
+                        <div class="status-item">
+                            <div class="label">Last Message</div>
+                            <div id="lastMessage" class="value">-</div>
+                        </div>
+                    </div>
+
+                    <div class="log-container" id="logContainer"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // MQTT Configuration
+        const MQTT_BROKER = '10.214.162.1';  // Update with your broker IP
+        const MQTT_PORT = 9002;  // WebSocket port
+        const CLIENT_ID = 'dashboard_' + Math.random().toString(16).substr(2, 8);
+
+        // Global variables
+        let mqttClient = null;
+        let isConnected = false;
+        let ledState = false;
+        let rssiChart = null;
+        let chartData = [];
+        let totalPackets = 0;
+        let systemData = {
+            tracking: false,
+            angle: 0,
+            bestAngle: -1,
+            bestRSSI: -999,
+            loraActive: false
+        };
+
+        // Initialize dashboard
+        document.addEventListener('DOMContentLoaded', function () {
+            initChart();
+            connectMQTT();
+            updateUI();
+
+            // Handle window resize for chart responsiveness
+            window.addEventListener('resize', function () {
+                if (rssiChart) {
+                    setTimeout(() => {
+                        rssiChart.resize();
+                    }, 100);
+                }
+            });
+        });
+
+        // Initialize Chart.js
+        function initChart() {
+            const ctx = document.getElementById('rssiChart').getContext('2d');
+            rssiChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'RSSI (dBm)',
+                        data: [],
+                        borderColor: '#2196F3',
+                        backgroundColor: 'rgba(33, 150, 243, 0.1)',
+                        borderWidth: 3,
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 4,
+                        pointHoverRadius: 6,
+                        pointBackgroundColor: '#2196F3',
+                        pointBorderColor: '#fff',
+                        pointBorderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    },
+                    scales: {
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Angle (degrees)',
+                                font: {
+                                    size: 14,
+                                    weight: 'bold'
+                                }
+                            },
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.1)'
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'RSSI (dBm)',
+                                font: {
+                                    size: 14,
+                                    weight: 'bold'
+                                }
+                            },
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.1)'
+                            },
+                            beginAtZero: false
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top',
+                            labels: {
+                                font: {
+                                    size: 14,
+                                    weight: 'bold'
+                                }
+                            }
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                            titleColor: 'white',
+                            bodyColor: 'white',
+                            borderColor: '#2196F3',
+                            borderWidth: 1,
+                            cornerRadius: 8,
+                            displayColors: true
+                        }
+                    },
+                    animation: {
+                        duration: 300,
+                        easing: 'easeInOutQuart'
+                    },
+                    elements: {
+                        line: {
+                            tension: 0.4
+                        }
+                    }
+                }
+            });
+
+            // Add resize observer for better responsiveness
+            const resizeObserver = new ResizeObserver(entries => {
+                if (rssiChart) {
+                    rssiChart.resize();
+                }
+            });
+
+            const chartContainer = document.querySelector('.chart-wrapper');
+            if (chartContainer) {
+                resizeObserver.observe(chartContainer);
+            }
+        }
+
+        // Connect to MQTT
+        function connectMQTT() {
+            try {
+                mqttClient = new Paho.MQTT.Client(MQTT_BROKER, MQTT_PORT, CLIENT_ID);
+
+                mqttClient.onConnectionLost = onConnectionLost;
+                mqttClient.onMessageArrived = onMessageArrived;
+
+                const options = {
+                    timeout: 3,
+                    onSuccess: onConnect,
+                    onFailure: onConnectFailure
+                };
+
+                log('Connecting to MQTT broker...', 'info');
+                mqttClient.connect(options);
+            } catch (error) {
+                log('MQTT connection error: ' + error.message, 'error');
+            }
+        }
+
+        function onConnect() {
+            log('Connected to MQTT broker', 'info');
+            isConnected = true;
+            updateConnectionStatus();
+
+            // Subscribe to topics
+            const topics = [
+                'esp32/status',
+                'esp32/lora/data',
+                'esp32/angle',
+                'esp32/rotation/complete',
+                'esp32/stored/data'
+            ];
+
+            topics.forEach(topic => {
+                mqttClient.subscribe(topic);
+                log(`Subscribed to ${topic}`, 'info');
+            });
+        }
+
+        function onConnectFailure(error) {
+            log('MQTT connection failed: ' + error.errorMessage, 'error');
+            isConnected = false;
+            updateConnectionStatus();
+
+            // Retry connection after 5 seconds
+            setTimeout(connectMQTT, 5000);
+        }
+
+        function onConnectionLost(responseObject) {
+            if (responseObject.errorCode !== 0) {
+                log('MQTT connection lost: ' + responseObject.errorMessage, 'error');
+                isConnected = false;
+                updateConnectionStatus();
+
+                // Retry connection
+                setTimeout(connectMQTT, 3000);
+            }
+        }
+
+        function onMessageArrived(message) {
+            const topic = message.destinationName;
+            const payload = message.payloadString;
+
+            try {
+                const data = JSON.parse(payload);
+                handleMQTTMessage(topic, data);
+            } catch (error) {
+                log(`Failed to parse message from ${topic}: ${error.message}`, 'error');
+            }
+        }
+
+        function handleMQTTMessage(topic, data) {
+            switch (topic) {
+                case 'esp32/status':
+                    handleStatusMessage(data);
+                    break;
+                case 'esp32/lora/data':
+                    handleLoRaData(data);
+                    break;
+                case 'esp32/angle':
+                    systemData.angle = parseInt(data);
+                    updateUI();
+                    break;
+                case 'esp32/rotation/complete':
+                    handleRotationComplete(data);
+                    break;
+                case 'esp32/stored/data':
+                    handleStoredData(data);
+                    break;
+            }
+        }
+
+        function handleStatusMessage(data) {
+            systemData.tracking = data.tracking;
+            systemData.angle = data.angle;
+            systemData.loraActive = data.lora_active;
+
+            if (data.current_best_rssi && data.current_best_rssi > -999) {
+                systemData.bestRSSI = data.current_best_rssi;
+            }
+
+            log(`Status: ${data.message}`, 'info');
+            updateUI();
+        }
+
+        function handleLoRaData(data) {
+            totalPackets++;
+
+            // Update live data display
+            document.getElementById('lastRSSI').textContent = data.rssi + ' dBm';
+            document.getElementById('lastSNR').textContent = data.snr.toFixed(1) + ' dB';
+            document.getElementById('packetCount').textContent = totalPackets;
+            document.getElementById('lastMessage').textContent = data.message || '-';
+
+            // Update chart
+            if (data.angle !== undefined && data.rssi !== undefined) {
+                updateChart(data.angle, data.rssi);
+            }
+
+            // Update best values
+            if (data.best_rssi_at_angle && data.best_rssi_at_angle > systemData.bestRSSI) {
+                systemData.bestRSSI = data.best_rssi_at_angle;
+                systemData.bestAngle = data.angle;
+            }
+
+            log(`📦 Angle ${data.angle}° | RSSI: ${data.rssi} dBm | SNR: ${data.snr.toFixed(1)} dB | Packets: ${data.packet_count_at_angle}`, 'data');
+            updateUI();
+        }
+
+        function handleRotationComplete(data) {
+            log(`🎯 Rotation Complete! Best: ${data.best_rssi} dBm at ${data.best_angle}°`, 'info');
+            systemData.bestAngle = data.best_angle;
+            systemData.bestRSSI = data.best_rssi;
+            systemData.tracking = false;
+            updateUI();
+        }
+
+        function handleStoredData(data) {
+            log(`📊 Received stored data chunk: ${data.chunk_start}-${data.chunk_end}`, 'info');
+            // You can process and display stored data here
+        }
+
+        function updateChart(angle, rssi) {
+            // Find existing data point or add new one
+            const existingIndex = chartData.findIndex(point => point.angle === angle);
+
+            if (existingIndex !== -1) {
+                // Update existing point with better RSSI
+                if (rssi > chartData[existingIndex].rssi) {
+                    chartData[existingIndex].rssi = rssi;
+                }
+            } else {
+                // Add new data point
+                chartData.push({ angle, rssi });
+            }
+
+            // Sort by angle
+            chartData.sort((a, b) => a.angle - b.angle);
+
+            // Update chart
+            rssiChart.data.labels = chartData.map(point => point.angle + '°');
+            rssiChart.data.datasets[0].data = chartData.map(point => point.rssi);
+            rssiChart.update('none');
+        }
+
+        function updateUI() {
+            // Update status badges
+            const mqttStatus = document.getElementById('mqttStatus');
+            const systemStatus = document.getElementById('systemStatus');
+            const loraStatus = document.getElementById('loraStatus');
+
+            mqttStatus.textContent = isConnected ? 'MQTT: Connected' : 'MQTT: Disconnected';
+            mqttStatus.className = 'status-badge ' + (isConnected ? 'status-connected' : 'status-disconnected');
+
+            systemStatus.textContent = systemData.tracking ? 'System: Tracking' : 'System: Idle';
+            systemStatus.className = 'status-badge ' + (systemData.tracking ? 'status-tracking' : 'status-idle');
+
+            loraStatus.textContent = systemData.loraActive ? 'LoRa: Active' : 'LoRa: Inactive';
+            loraStatus.className = 'status-badge ' + (systemData.loraActive ? 'status-connected' : 'status-disconnected');
+
+            // Update values
+            document.getElementById('currentAngle').textContent = systemData.angle + '°';
+            document.getElementById('bestAngle').textContent = systemData.bestAngle >= 0 ? systemData.bestAngle + '°' : '-';
+            document.getElementById('bestRSSI').textContent = systemData.bestRSSI > -999 ? systemData.bestRSSI + ' dBm' : '- dBm';
+
+            // Update progress
+            const progress = Math.round((systemData.angle / 180) * 100);
+            document.getElementById('progressPercent').textContent = progress + '%';
+            document.getElementById('progressBar').style.width = progress + '%';
+
+            // Update button states
+            const startBtn = document.getElementById('startBtn');
+            const stopBtn = document.getElementById('stopBtn');
+
+            startBtn.disabled = !isConnected || systemData.tracking;
+            stopBtn.disabled = !isConnected || !systemData.tracking;
+        }
+
+        function updateConnectionStatus() {
+            const statusEl = document.getElementById('connectionStatus');
+            statusEl.textContent = isConnected ? 'MQTT Connected' : 'MQTT Disconnected';
+            statusEl.className = 'connection-status ' + (isConnected ? 'status-connected' : 'status-disconnected');
+            updateUI();
+        }
+
+        // Control functions
+        function startTracking() {
+            if (!isConnected) return;
+            publishMessage('esp32/start', '');
+            log('🚀 Starting tracking...', 'info');
+        }
+
+        function stopTracking() {
+            if (!isConnected) return;
+            publishMessage('esp32/stop', '');
+            log('⏹️ Stopping tracking...', 'info');
+        }
+
+        function resetSystem() {
+            if (!isConnected) return;
+            publishMessage('esp32/reset', '');
+            log('🔄 Resetting system...', 'info');
+
+            // Clear chart data
+            chartData = [];
+            rssiChart.data.labels = [];
+            rssiChart.data.datasets[0].data = [];
+            rssiChart.update();
+
+            // Reset counters
+            totalPackets = 0;
+            systemData.bestAngle = -1;
+            systemData.bestRSSI = -999;
+            updateUI();
+        }
+
+        function toggleLED() {
+            if (!isConnected) return;
+            ledState = !ledState;
+            publishMessage('esp32/led', ledState ? 'ON' : 'OFF');
+            log(`💡 LED turned ${ledState ? 'ON' : 'OFF'}`, 'info');
+        }
+
+        function publishMessage(topic, message) {
+            if (!isConnected) {
+                log('Cannot publish: MQTT not connected', 'error');
+                return;
+            }
+
+            try {
+                const msg = new Paho.MQTT.Message(message);
+                msg.destinationName = topic;
+                mqttClient.send(msg);
+            } catch (error) {
+                log('Failed to publish message: ' + error.message, 'error');
+            }
+        }
+
+        function log(message, type = 'info') {
+            const logContainer = document.getElementById('logContainer');
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry log-${type}`;
+            logEntry.textContent = `[${timestamp}] ${message}`;
+
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+
+            // Keep only last 100 entries
+            while (logContainer.children.length > 100) {
+                logContainer.removeChild(logContainer.firstChild);
+            }
+        }
+    </script>
+</body>
+
+</html>

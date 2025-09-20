@@ -1,0 +1,1053 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dual ESP32 LoRa Tracker Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #2196F3 0%, #21CBF3 100%);
+            color: white;
+            padding: 20px 30px;
+            text-align: center;
+            position: relative;
+        }
+
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse"><path d="M 10 0 L 0 0 0 10" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1"/></pattern></defs><rect width="100" height="100" fill="url(%23grid)"/></svg>');
+            opacity: 0.3;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .connection-status {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            padding: 10px 15px;
+            border-radius: 25px;
+            font-size: 14px;
+            font-weight: bold;
+            z-index: 2;
+        }
+
+        .status-badges {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            position: relative;
+            z-index: 1;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        .status-connected {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .status-disconnected {
+            background: #f44336;
+            color: white;
+        }
+
+        .status-tracking {
+            background: #FF9800;
+            color: white;
+        }
+
+        .status-idle {
+            background: #9E9E9E;
+            color: white;
+        }
+
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            padding: 30px;
+        }
+
+        .device-section {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(0, 0, 0, 0.05);
+        }
+
+        .device-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #2196F3;
+        }
+
+        .device-title {
+            font-size: 1.6em;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .device-status {
+            margin-left: auto;
+            display: flex;
+            gap: 10px;
+        }
+
+        .control-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .btn {
+            padding: 12px 16px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+        }
+
+        .btn:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #4CAF50, #45a049);
+            color: white;
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #f44336, #d32f2f);
+            color: white;
+        }
+
+        .btn-warning {
+            background: linear-gradient(135deg, #FF9800, #f57c00);
+            color: white;
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, #9E9E9E, #757575);
+            color: white;
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .status-item {
+            background: #f8f9fa;
+            padding: 12px;
+            border-radius: 8px;
+            border-left: 3px solid #2196F3;
+        }
+
+        .status-item .label {
+            font-size: 11px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 3px;
+        }
+
+        .status-item .value {
+            font-size: 16px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 15px;
+            background: #e0e0e0;
+            border-radius: 8px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4CAF50, #45a049);
+            width: 0%;
+            transition: width 0.3s ease;
+            position: relative;
+        }
+
+        .progress-fill::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+            animation: shimmer 2s infinite;
+        }
+
+        @keyframes shimmer {
+            0% {
+                transform: translateX(-100%);
+            }
+
+            100% {
+                transform: translateX(100%);
+            }
+        }
+
+        .chart-container {
+            margin-top: 20px;
+            height: 400px;
+            position: relative;
+            background: #fafafa;
+            border-radius: 10px;
+            padding: 15px;
+        }
+
+        .chart-wrapper {
+            position: relative;
+            height: 100%;
+            width: 100%;
+        }
+
+        .live-data {
+            margin-top: 15px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 3px solid #2196F3;
+        }
+
+        .live-data h4 {
+            margin-bottom: 10px;
+            color: #333;
+        }
+
+        .data-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .data-item {
+            background: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            text-align: center;
+        }
+
+        .data-item .label {
+            font-size: 10px;
+            color: #666;
+            text-transform: uppercase;
+        }
+
+        .data-item .value {
+            font-size: 14px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .log-container {
+            grid-column: 1 / -1;
+            background: #1a1a1a;
+            border-radius: 10px;
+            padding: 15px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            color: #00ff00;
+            margin-top: 20px;
+        }
+
+        .log-entry {
+            margin-bottom: 3px;
+            padding: 3px;
+            border-radius: 2px;
+        }
+
+        .log-info {
+            color: #00ff00;
+        }
+
+        .log-warning {
+            color: #ffaa00;
+            background: rgba(255, 170, 0, 0.1);
+        }
+
+        .log-error {
+            color: #ff4444;
+            background: rgba(255, 68, 68, 0.1);
+        }
+
+        .log-data {
+            color: #00aaff;
+        }
+
+        .log-device1 {
+            border-left: 3px solid #4CAF50;
+        }
+
+        .log-device2 {
+            border-left: 3px solid #FF9800;
+        }
+
+        .device1 {
+            border-top: 3px solid #4CAF50;
+        }
+
+        .device2 {
+            border-top: 3px solid #FF9800;
+        }
+
+        @media (max-width: 1200px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+                gap: 20px;
+                padding: 20px;
+            }
+
+            .container {
+                margin: 10px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .control-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .status-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .data-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .header h1 {
+                font-size: 1.8em;
+            }
+
+            .connection-status {
+                position: relative;
+                top: 0;
+                right: 0;
+                margin: 10px 0;
+            }
+
+            .chart-container {
+                height: 300px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            body {
+                padding: 10px;
+            }
+
+            .main-grid {
+                padding: 15px;
+            }
+
+            .device-section {
+                padding: 15px;
+            }
+
+            .chart-container {
+                height: 250px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 Dual ESP32 LoRa Tracker Dashboard</h1>
+            <div id="connectionStatus" class="connection-status status-disconnected">MQTT Disconnected</div>
+            <div class="status-badges">
+                <span id="mqttStatus" class="status-badge status-disconnected">MQTT: Disconnected</span>
+            </div>
+        </div>
+
+        <div class="main-grid">
+            <!-- Device 1 Section -->
+            <div class="device-section device1">
+                <div class="device-header">
+                    <div class="device-title">📡 ESP32 Device 1</div>
+                    <div class="device-status">
+                        <span id="device1Status" class="status-badge status-idle">Idle</span>
+                        <span id="device1LoraStatus" class="status-badge status-disconnected">LoRa: Unknown</span>
+                    </div>
+                </div>
+
+                <div class="control-grid">
+                    <button id="startBtn1" class="btn btn-primary" onclick="startTracking(1)">🚀 Start</button>
+                    <button id="stopBtn1" class="btn btn-danger" onclick="stopTracking(1)">⏹️ Stop</button>
+                    <button id="resetBtn1" class="btn btn-warning" onclick="resetSystem(1)">🔄 Reset</button>
+                    <button id="ledBtn1" class="btn btn-secondary" onclick="toggleLED(1)">💡 LED</button>
+                </div>
+
+                <div class="status-grid">
+                    <div class="status-item">
+                        <div class="label">Angle</div>
+                        <div id="angle1" class="value">0°</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="label">Progress</div>
+                        <div id="progress1" class="value">0%</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="label">Best Angle</div>
+                        <div id="bestAngle1" class="value">-</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="label">Best RSSI</div>
+                        <div id="bestRSSI1" class="value">-</div>
+                    </div>
+                </div>
+
+                <div class="progress-bar">
+                    <div id="progressBar1" class="progress-fill"></div>
+                </div>
+
+                <div class="chart-container">
+                    <div class="chart-wrapper">
+                        <canvas id="polarChart1"></canvas>
+                    </div>
+                </div>
+
+                <div class="live-data">
+                    <h4>📦 Live Data</h4>
+                    <div class="data-grid">
+                        <div class="data-item">
+                            <div class="label">RSSI</div>
+                            <div id="rssi1" class="value">-</div>
+                        </div>
+                        <div class="data-item">
+                            <div class="label">SNR</div>
+                            <div id="snr1" class="value">-</div>
+                        </div>
+                        <div class="data-item">
+                            <div class="label">Packets</div>
+                            <div id="packets1" class="value">0</div>
+                        </div>
+                        <div class="data-item">
+                            <div class="label">Message</div>
+                            <div id="message1" class="value">-</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Device 2 Section -->
+            <div class="device-section device2">
+                <div class="device-header">
+                    <div class="device-title">📡 ESP32 Device 2</div>
+                    <div class="device-status">
+                        <span id="device2Status" class="status-badge status-idle">Idle</span>
+                        <span id="device2LoraStatus" class="status-badge status-disconnected">LoRa: Unknown</span>
+                    </div>
+                </div>
+
+                <div class="control-grid">
+                    <button id="startBtn2" class="btn btn-primary" onclick="startTracking(2)">🚀 Start</button>
+                    <button id="stopBtn2" class="btn btn-danger" onclick="stopTracking(2)">⏹️ Stop</button>
+                    <button id="resetBtn2" class="btn btn-warning" onclick="resetSystem(2)">🔄 Reset</button>
+                    <button id="ledBtn2" class="btn btn-secondary" onclick="toggleLED(2)">💡 LED</button>
+                </div>
+
+                <div class="status-grid">
+                    <div class="status-item">
+                        <div class="label">Angle</div>
+                        <div id="angle2" class="value">0°</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="label">Progress</div>
+                        <div id="progress2" class="value">0%</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="label">Best Angle</div>
+                        <div id="bestAngle2" class="value">-</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="label">Best RSSI</div>
+                        <div id="bestRSSI2" class="value">-</div>
+                    </div>
+                </div>
+
+                <div class="progress-bar">
+                    <div id="progressBar2" class="progress-fill"></div>
+                </div>
+
+                <div class="chart-container">
+                    <div class="chart-wrapper">
+                        <canvas id="polarChart2"></canvas>
+                    </div>
+                </div>
+
+                <div class="live-data">
+                    <h4>📦 Live Data</h4>
+                    <div class="data-grid">
+                        <div class="data-item">
+                            <div class="label">RSSI</div>
+                            <div id="rssi2" class="value">-</div>
+                        </div>
+                        <div class="data-item">
+                            <div class="label">SNR</div>
+                            <div id="snr2" class="value">-</div>
+                        </div>
+                        <div class="data-item">
+                            <div class="label">Packets</div>
+                            <div id="packets2" class="value">0</div>
+                        </div>
+                        <div class="data-item">
+                            <div class="label">Message</div>
+                            <div id="message2" class="value">-</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Shared Log Container -->
+        <div class="log-container" id="logContainer"></div>
+    </div>
+
+    <script>
+        // MQTT Configuration
+        const MQTT_BROKER = '10.214.162.1';  // Update with your broker IP
+        const MQTT_PORT = 9002;  // WebSocket port
+        const CLIENT_ID = 'dual_dashboard_' + Math.random().toString(16).substr(2, 8);
+
+        // Global variables
+        let mqttClient = null;
+        let isConnected = false;
+        let polarChart1 = null;
+        let polarChart2 = null;
+        let chartData1 = [];
+        let chartData2 = [];
+
+        // Device states
+        let devices = {
+            1: {
+                tracking: false,
+                angle: 0,
+                bestAngle: -1,
+                bestRSSI: -999,
+                loraActive: false,
+                ledState: false,
+                packetCount: 0,
+                rssi: null,
+                snr: null,
+                message: null
+            },
+            2: {
+                tracking: false,
+                angle: 0,
+                bestAngle: -1,
+                bestRSSI: -999,
+                loraActive: false,
+                ledState: false,
+                packetCount: 0,
+                rssi: null,
+                snr: null,
+                message: null
+            }
+        };
+
+        // Initialize dashboard
+        document.addEventListener('DOMContentLoaded', function () {
+            initCharts();
+            connectMQTT();
+            updateUI();
+
+            // Handle window resize
+            window.addEventListener('resize', function () {
+                setTimeout(() => {
+                    if (polarChart1) polarChart1.resize();
+                    if (polarChart2) polarChart2.resize();
+                }, 100);
+            });
+        });
+
+        // UI Update Functions
+        function updateDeviceUI(deviceId) {
+            const device = devices[deviceId];
+            if (!device) {
+                log(`Error: Device ${deviceId} not found`, 'error');
+                return;
+            }
+
+            try {
+                // Update status badge
+                const statusEl = document.getElementById(`device${deviceId}Status`);
+                const loraEl = document.getElementById(`device${deviceId}LoraStatus`);
+                if (!statusEl || !loraEl) throw new Error(`DOM elements for device ${deviceId} not found`);
+
+                statusEl.textContent = device.tracking ? 'Tracking' : 'Idle';
+                statusEl.className = 'status-badge ' + (device.tracking ? 'status-tracking' : 'status-idle');
+
+                loraEl.textContent = device.loraActive ? 'LoRa: Active' : 'LoRa: Inactive';
+                loraEl.className = 'status-badge ' + (device.loraActive ? 'status-connected' : 'status-disconnected');
+
+                // Update values
+                document.getElementById(`angle${deviceId}`).textContent = device.angle + '°';
+                document.getElementById(`bestAngle${deviceId}`).textContent = device.bestAngle >= 0 ? device.bestAngle + '°' : '-';
+                document.getElementById(`bestRSSI${deviceId}`).textContent = device.bestRSSI > -999 ? device.bestRSSI + ' dBm' : '-';
+
+                // Update progress
+                const progress = Math.round((device.angle / 180) * 100);
+                document.getElementById(`progress${deviceId}`).textContent = progress + '%';
+                document.getElementById(`progressBar${deviceId}`).style.width = progress + '%';
+
+                // Update live data
+                document.getElementById(`rssi${deviceId}`).textContent = device.rssi !== null ? device.rssi + ' dBm' : '-';
+                document.getElementById(`snr${deviceId}`).textContent = device.snr !== null ? device.snr.toFixed(1) + ' dB' : '-';
+                document.getElementById(`packets${deviceId}`).textContent = device.packetCount;
+                document.getElementById(`message${deviceId}`).textContent = device.message || '-';
+
+                // Update button states
+                const startBtn = document.getElementById(`startBtn${deviceId}`);
+                const stopBtn = document.getElementById(`stopBtn${deviceId}`);
+                const resetBtn = document.getElementById(`resetBtn${deviceId}`);
+                const ledBtn = document.getElementById(`ledBtn${deviceId}`);
+
+                startBtn.disabled = !isConnected || device.tracking;
+                stopBtn.disabled = !isConnected || !device.tracking;
+                resetBtn.disabled = !isConnected;
+                ledBtn.disabled = !isConnected;
+            } catch (error) {
+                log(`Error updating UI for device ${deviceId}: ${error.message}`, 'error');
+            }
+        }
+
+        function updateConnectionStatus() {
+            const statusEl = document.getElementById('connectionStatus');
+            const mqttStatusEl = document.getElementById('mqttStatus');
+
+            statusEl.textContent = isConnected ? 'MQTT Connected' : 'MQTT Disconnected';
+            statusEl.className = 'connection-status ' + (isConnected ? 'status-connected' : 'status-disconnected');
+
+            mqttStatusEl.textContent = isConnected ? 'MQTT: Connected' : 'MQTT: Disconnected';
+            mqttStatusEl.className = 'status-badge ' + (isConnected ? 'status-connected' : 'status-disconnected');
+
+            updateUI();
+        }
+
+        function updateUI() {
+            updateDeviceUI(1);
+            updateDeviceUI(2);
+        }
+
+        // Initialize polar charts
+        function initCharts() {
+            initPolarChart(1);
+            initPolarChart(2);
+        }
+
+        function initPolarChart(deviceId) {
+            const ctx = document.getElementById(`polarChart${deviceId}`).getContext('2d');
+            const chart = new Chart(ctx, {
+                type: 'polarArea',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'RSSI (dBm)',
+                        data: [],
+                        backgroundColor: generateColorArray(181, deviceId),
+                        borderColor: deviceId === 1 ? '#4CAF50' : '#FF9800',
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        r: {
+                            beginAtZero: true,
+                            min: -120,
+                            max: -30,
+                            ticks: {
+                                stepSize: 10,
+                                callback: function (value) {
+                                    return value + ' dBm';
+                                }
+                            },
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.1)'
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top',
+                            labels: {
+                                font: {
+                                    size: 12,
+                                    weight: 'bold'
+                                }
+                            }
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                            titleColor: 'white',
+                            bodyColor: 'white',
+                            borderColor: deviceId === 1 ? '#4CAF50' : '#FF9800',
+                            borderWidth: 1,
+                            cornerRadius: 8,
+                            callbacks: {
+                                label: function (context) {
+                                    return `Angle: ${context.label}° | RSSI: ${context.parsed.r} dBm`;
+                                }
+                            }
+                        }
+                    },
+                    animation: {
+                        duration: 300,
+                        easing: 'easeInOutQuart'
+                    }
+                }
+            });
+
+            if (deviceId === 1) {
+                polarChart1 = chart;
+            } else {
+                polarChart2 = chart;
+            }
+
+            // Add resize observer
+            const resizeObserver = new ResizeObserver(entries => {
+                if (chart) {
+                    chart.resize();
+                }
+            });
+
+            const chartContainer = document.querySelector(`#polarChart${deviceId}`).parentElement;
+            if (chartContainer) {
+                resizeObserver.observe(chartContainer);
+            }
+        }
+
+        function generateColorArray(count, deviceId) {
+            const colors = [];
+            const baseColor = deviceId === 1 ? [76, 175, 80] : [255, 152, 0]; // Green or Orange
+
+            for (let i = 0; i < count; i++) {
+                const alpha = 0.3 + (i / count) * 0.7; // Fade from 0.3 to 1.0
+                colors.push(`rgba(${baseColor[0]}, ${baseColor[1]}, ${baseColor[2]}, ${alpha})`);
+            }
+            return colors;
+        }
+
+        // MQTT Functions
+        function connectMQTT() {
+            try {
+                mqttClient = new Paho.MQTT.Client(MQTT_BROKER, MQTT_PORT, CLIENT_ID);
+
+                mqttClient.onConnectionLost = onConnectionLost;
+                mqttClient.onMessageArrived = onMessageArrived;
+
+                const options = {
+                    timeout: 3,
+                    onSuccess: onConnect,
+                    onFailure: onConnectFailure
+                };
+
+                log('Connecting to MQTT broker...', 'info');
+                mqttClient.connect(options);
+            } catch (error) {
+                log('MQTT connection error: ' + error.message, 'error');
+            }
+        }
+
+        function onConnect() {
+            log('Connected to MQTT broker', 'info');
+            isConnected = true;
+            updateConnectionStatus();
+
+            // Subscribe to topics for both devices
+            const topics = [
+                'esp32_1/status', 'esp32_1/lora/data', 'esp32_1/angle', 'esp32_1/rotation/complete',
+                'esp32_2/status', 'esp32_2/lora/data', 'esp32_2/angle', 'esp32_2/rotation/complete'
+            ];
+
+            topics.forEach(topic => {
+                mqttClient.subscribe(topic);
+                log(`Subscribed to ${topic}`, 'info');
+            });
+        }
+
+        function onConnectFailure(error) {
+            log('MQTT connection failed: ' + error.errorMessage, 'error');
+            isConnected = false;
+            updateConnectionStatus();
+            setTimeout(connectMQTT, 5000);
+        }
+
+        function onConnectionLost(responseObject) {
+            if (responseObject.errorCode !== 0) {
+                log('MQTT connection lost: ' + responseObject.errorMessage, 'error');
+                isConnected = false;
+                updateConnectionStatus();
+                setTimeout(connectMQTT, 3000);
+            }
+        }
+
+        function onMessageArrived(message) {
+            const topic = message.destinationName;
+            const payload = message.payloadString;
+
+            try {
+                const data = JSON.parse(payload);
+                handleMQTTMessage(topic, data);
+            } catch (error) {
+                log(`Failed to parse message from ${topic}: ${error.message}`, 'error');
+            }
+        }
+
+        function handleMQTTMessage(topic, data) {
+            const deviceId = topic.includes('esp32_1') ? 1 : 2;
+            const topicType = topic.split('/').pop();
+
+            switch (topicType) {
+                case 'status':
+                    handleStatusMessage(deviceId, data);
+                    break;
+                case 'data':
+                    handleLoRaData(deviceId, data);
+                    break;
+                case 'angle':
+                    devices[deviceId].angle = parseInt(data);
+                    updateDeviceUI(deviceId);
+                    break;
+                case 'complete':
+                    handleRotationComplete(deviceId, data);
+                    break;
+            }
+        }
+
+        function handleStatusMessage(deviceId, data) {
+            devices[deviceId].tracking = data.tracking;
+            devices[deviceId].angle = data.angle;
+            devices[deviceId].loraActive = data.lora_active;
+
+            if (data.current_best_rssi && data.current_best_rssi > -999) {
+                devices[deviceId].bestRSSI = data.current_best_rssi;
+            }
+
+            log(`Device ${deviceId} Status: ${data.message}`, 'info', deviceId);
+            updateDeviceUI(deviceId);
+        }
+
+        function handleLoRaData(deviceId, data) {
+            devices[deviceId].packetCount++;
+
+            // Store live data in devices object
+            devices[deviceId].rssi = data.rssi;
+            devices[deviceId].snr = data.snr;
+            devices[deviceId].message = data.message || '-';
+
+            // Update chart
+            if (data.angle !== undefined && data.rssi !== undefined) {
+                updatePolarChart(deviceId, data.angle, data.rssi);
+            }
+
+            // Update best values
+            if (data.best_rssi_at_angle && data.best_rssi_at_angle > devices[deviceId].bestRSSI) {
+                devices[deviceId].bestRSSI = data.best_rssi_at_angle;
+                devices[deviceId].bestAngle = data.angle;
+            }
+
+            log(`Device ${deviceId} - Angle ${data.angle}° | RSSI: ${data.rssi} dBm`, 'data', deviceId);
+            updateDeviceUI(deviceId);
+        }
+
+        function handleRotationComplete(deviceId, data) {
+            log(`Device ${deviceId} - Rotation Complete! Best: ${data.best_rssi} dBm at ${data.best_angle}°`, 'info', deviceId);
+            devices[deviceId].bestAngle = data.best_angle;
+            devices[deviceId].bestRSSI = data.best_rssi;
+            devices[deviceId].tracking = false;
+            updateDeviceUI(deviceId);
+        }
+
+        function updatePolarChart(deviceId, angle, rssi) {
+            const chartData = deviceId === 1 ? chartData1 : chartData2;
+            const chart = deviceId === 1 ? polarChart1 : polarChart2;
+
+            // Convert RSSI to positive value for polar chart (higher = better)
+            const polarValue = Math.max(0, rssi + 120); // Shift -120 dBm to 0, -30 dBm to 90
+
+            // Find existing data point or add new one
+            const existingIndex = chartData.findIndex(point => point.angle === angle);
+
+            if (existingIndex !== -1) {
+                if (rssi > chartData[existingIndex].rssi) {
+                    chartData[existingIndex].rssi = rssi;
+                    chartData[existingIndex].polarValue = polarValue;
+                }
+            } else {
+                chartData.push({ angle, rssi, polarValue });
+            }
+
+            // Sort by angle
+            chartData.sort((a, b) => a.angle - b.angle);
+
+            // Update chart
+            chart.data.labels = chartData.map(point => point.angle);
+            chart.data.datasets[0].data = chartData.map(point => point.polarValue);
+            chart.update('none');
+        }
+
+        // Control functions
+        function startTracking(deviceId) {
+            if (!isConnected) return;
+            publishMessage(`esp32_${deviceId}/start`, '');
+            log(`Device ${deviceId} - Starting tracking...`, 'info', deviceId);
+        }
+
+        function stopTracking(deviceId) {
+            if (!isConnected) return;
+            publishMessage(`esp32_${deviceId}/stop`, '');
+            log(`Device ${deviceId} - Stopping tracking...`, 'info', deviceId);
+        }
+
+        function resetSystem(deviceId) {
+            if (!isConnected) return;
+            publishMessage(`esp32_${deviceId}/reset`, '');
+            log(`Device ${deviceId} - Resetting system...`, 'info', deviceId);
+
+            // Clear chart data
+            const chartData = deviceId === 1 ? chartData1 : chartData2;
+            const chart = deviceId === 1 ? polarChart1 : polarChart2;
+
+            chartData.length = 0;
+            chart.data.labels = [];
+            chart.data.datasets[0].data = [];
+            chart.update();
+
+            // Reset device state
+            devices[deviceId].bestAngle = -1;
+            devices[deviceId].bestRSSI = -999;
+            devices[deviceId].packetCount = 0;
+            devices[deviceId].rssi = null;
+            devices[deviceId].snr = null;
+            devices[deviceId].message = null;
+            updateDeviceUI(deviceId);
+        }
+
+        function toggleLED(deviceId) {
+            if (!isConnected) return;
+            devices[deviceId].ledState = !devices[deviceId].ledState;
+            publishMessage(`esp32_${deviceId}/led`, devices[deviceId].ledState ? 'ON' : 'OFF');
+            log(`Device ${deviceId} - LED turned ${devices[deviceId].ledState ? 'ON' : 'OFF'}`, 'info', deviceId);
+        }
+
+        function publishMessage(topic, message) {
+            if (!isConnected) {
+                log('Cannot publish: MQTT not connected', 'error');
+                return;
+            }
+
+            try {
+                const msg = new Paho.MQTT.Message(message);
+                msg.destinationName = topic;
+                mqttClient.send(msg);
+            } catch (error) {
+                log('Failed to publish message: ' + error.message, 'error');
+            }
+        }
+
+        function log(message, type = 'info', deviceId = null) {
+            const logContainer = document.getElementById('logContainer');
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+
+            let deviceClass = '';
+            if (deviceId) {
+                deviceClass = ` log-device${deviceId}`;
+            }
+
+            logEntry.className = `log-entry log-${type}${deviceClass}`;
+            logEntry.textContent = `[${timestamp}] ${message}`;
+
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+
+            // Keep only last 100 entries
+            while (logContainer.children.length > 100) {
+                logContainer.removeChild(logContainer.firstChild);
+            }
+        }
+    </script>
+</body>
+
+</html>
