@@ -1,433 +1,54 @@
 import { useState, useEffect, useRef } from 'react';
-import { Line } from 'react-chartjs-2';
 import {
-  Chart as ChartJS,
-  LineElement,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  Title,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
   Tooltip,
   Legend,
-} from 'chart.js';
+  ResponsiveContainer,
+} from 'recharts';
 
-// Register Chart.js components
-ChartJS.register(
-  LineElement,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  Title,
-  Tooltip,
-  Legend
-);
-
-// Header Component
-const Header = ({
-  isConnected,
-  connecting,
-  systemData,
-  mqttBroker,
-  setMqttBroker,
-  connectMQTT,
-}) => {
-  const [inputBroker, setInputBroker] = useState(mqttBroker);
-
-  const handleBrokerChange = (e) => {
-    setInputBroker(e.target.value);
-  };
-
-  const handleBrokerSubmit = () => {
-    if (inputBroker && inputBroker !== mqttBroker) {
-      setMqttBroker(inputBroker);
-      connectMQTT(inputBroker);
-    }
-  };
-
-  return (
-    <div className="bg-gradient-to-r from-blue-500 to-cyan-500 text-white p-8 text-center relative overflow-hidden">
-      <div className="absolute inset-0 opacity-30">
-        <svg className="w-full h-full" viewBox="0 0 100 100">
-          <defs>
-            <pattern
-              id="grid"
-              width="10"
-              height="10"
-              patternUnits="userSpaceOnUse"
-            >
-              <path
-                d="M 10 0 L 0 0 0 10"
-                fill="none"
-                stroke="rgba(255,255,255,0.1)"
-                strokeWidth="1"
-              />
-            </pattern>
-          </defs>
-          <rect width="100" height="100" fill="url(#grid)" />
-        </svg>
-      </div>
-
-      <h1 className="text-4xl font-bold mb-4 relative z-10">
-        🚀 ESP32 LoRa Tracker Dashboard
-      </h1>
-
-      <div className="absolute top-5 right-5 z-10">
-        <span
-          className={`px-4 py-2 rounded-full text-sm font-bold ${
-            connecting
-              ? 'bg-yellow-500'
-              : isConnected
-              ? 'bg-green-500'
-              : 'bg-red-500'
-          }`}
-        >
-          {connecting
-            ? 'MQTT Connecting...'
-            : isConnected
-            ? 'MQTT Connected'
-            : 'MQTT Disconnected'}
-        </span>
-      </div>
-
-      <div className="flex flex-wrap justify-center gap-3 relative z-10 mb-4">
-        <span
-          className={`px-4 py-2 rounded-full text-sm font-bold ${
-            connecting
-              ? 'bg-yellow-500'
-              : isConnected
-              ? 'bg-green-500'
-              : 'bg-red-500'
-          }`}
-        >
-          MQTT:{' '}
-          {connecting
-            ? 'Connecting...'
-            : isConnected
-            ? 'Connected'
-            : 'Disconnected'}
-        </span>
-        {Object.keys(systemData).map((boardId) => (
-          <div key={boardId} className="flex gap-3">
-            <span
-              className={`px-4 py-2 rounded-full text-sm font-bold ${
-                systemData[boardId].tracking ? 'bg-orange-500' : 'bg-gray-500'
-              }`}
-            >
-              {boardId} System:{' '}
-              {systemData[boardId].tracking ? 'Tracking' : 'Idle'}
-            </span>
-            <span
-              className={`px-4 py-2 rounded-full text-sm font-bold ${
-                systemData[boardId].loraActive ? 'bg-green-500' : 'bg-red-500'
-              }`}
-            >
-              {boardId} LoRa:{' '}
-              {systemData[boardId].loraActive ? 'Active' : 'Inactive'}
-            </span>
-          </div>
-        ))}
-      </div>
-
-      <div className="relative z-10 flex justify-center gap-2 max-w-md mx-auto">
-        <input
-          type="text"
-          value={inputBroker}
-          onChange={handleBrokerChange}
-          placeholder="Enter MQTT Broker IP"
-          className="px-4 py-2 rounded-xl text-gray-800 w-full max-w-xs"
-        />
-        <button
-          onClick={handleBrokerSubmit}
-          disabled={connecting || !inputBroker}
-          className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-4 py-2 rounded-xl font-semibold hover:from-blue-700 hover:to-blue-800 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          Update IP
-        </button>
-      </div>
-    </div>
-  );
-};
-
-// ControlPanel Component
-const ControlPanel = ({
-  boardId,
-  isConnected,
-  connecting,
-  systemData,
-  startTracking,
-  stopTracking,
-  resetSystem,
-  toggleLED,
-}) => {
-  const progress = Math.round((systemData[boardId].angle / 180) * 100);
-
-  return (
-    <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-100">
-      <h3 className="text-xl font-bold text-gray-800 mb-6 pb-3 border-b-2 border-blue-500">
-        🎮 Control Panel - {boardId}
-      </h3>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-        <button
-          onClick={() => startTracking(boardId)}
-          disabled={!isConnected || systemData[boardId].tracking}
-          className="bg-gradient-to-r from-green-500 to-green-600 text-white px-6 py-4 rounded-xl font-semibold hover:from-green-600 hover:to-green-700 transform hover:-translate-y-1 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg"
-        >
-          🚀 Start Tracking
-        </button>
-        <button
-          onClick={() => stopTracking(boardId)}
-          disabled={!isConnected || !systemData[boardId].tracking}
-          className="bg-gradient-to-r from-red-500 to-red-600 text-white px-6 py-4 rounded-xl font-semibold hover:from-red-600 hover:to-red-700 transform hover:-translate-y-1 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg"
-        >
-          ⏹️ Stop Tracking
-        </button>
-        <button
-          onClick={() => resetSystem(boardId)}
-          disabled={!isConnected}
-          className="bg-gradient-to-r from-orange-500 to-orange-600 text-white px-6 py-4 rounded-xl font-semibold hover:from-orange-600 hover:to-orange-700 transform hover:-translate-y-1 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg"
-        >
-          🔄 Reset System
-        </button>
-        <button
-          onClick={() => toggleLED(boardId)}
-          disabled={!isConnected}
-          className="bg-gradient-to-r from-gray-500 to-gray-600 text-white px-6 py-4 rounded-xl font-semibold hover:from-gray-600 hover:to-gray-700 transform hover:-translate-y-1 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg"
-        >
-          💡 Toggle LED
-        </button>
-      </div>
-      <div className="grid grid-cols-2 gap-4 mb-6">
-        <div className="bg-gray-50 p-4 rounded-xl border-l-4 border-blue-500">
-          <div className="text-xs text-gray-600 uppercase tracking-wide mb-1">
-            Current Angle
-          </div>
-          <div className="text-xl font-bold text-gray-800">
-            {systemData[boardId].angle}°
-          </div>
-        </div>
-        <div className="bg-gray-50 p-4 rounded-xl border-l-4 border-blue-500">
-          <div className="text-xs text-gray-600 uppercase tracking-wide mb-1">
-            Progress
-          </div>
-          <div className="text-xl font-bold text-gray-800">{progress}%</div>
-        </div>
-        <div className="bg-gray-50 p-4 rounded-xl border-l-4 border-blue-500">
-          <div className="text-xs text-gray-600 uppercase tracking-wide mb-1">
-            Best Angle
-          </div>
-          <div className="text-xl font-bold text-gray-800">
-            {systemData[boardId].bestAngle >= 0
-              ? `${systemData[boardId].bestAngle}°`
-              : '-'}
-          </div>
-        </div>
-        <div className="bg-gray-50 p-4 rounded-xl border-l-4 border-blue-500">
-          <div className="text-xs text-gray-600 uppercase tracking-wide mb-1">
-            Best RSSI
-          </div>
-          <div className="text-xl font-bold text-gray-800">
-            {systemData[boardId].bestRSSI > -999
-              ? `${systemData[boardId].bestRSSI} dBm`
-              : '- dBm'}
-          </div>
-        </div>
-      </div>
-      <div className="w-full h-5 bg-gray-200 rounded-full overflow-hidden relative">
-        <div
-          className="h-full bg-gradient-to-r from-green-500 to-green-600 transition-all duration-300 ease-in-out relative"
-          style={{ width: `${progress}%` }}
-        >
-          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-pulse"></div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// LiveChart Component
-const LiveChart = ({ boardId, chartData }) => {
-  const chartDataConfig = {
-    labels: chartData.map((point) => point.angle + '°'),
-    datasets: [
-      {
-        label: `RSSI (dBm) - ${boardId}`,
-        data: chartData.map((point) => point.rssi),
-        borderColor: boardId === 'Board 1' ? '#2196F3' : '#F44336',
-        backgroundColor:
-          boardId === 'Board 1'
-            ? 'rgba(33, 150, 243, 0.1)'
-            : 'rgba(244, 67, 54, 0.1)',
-        borderWidth: 3,
-        fill: true,
-        tension: 0.4,
-        pointRadius: 4,
-        pointHoverRadius: 6,
-        pointBackgroundColor: boardId === 'Board 1' ? '#2196F3' : '#F44336',
-        pointBorderColor: '#fff',
-        pointBorderWidth: 2,
-      },
-    ],
-  };
-
-  const chartOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    interaction: { intersect: false, mode: 'index' },
-    scales: {
-      x: {
-        title: {
-          display: true,
-          text: 'Angle (degrees)',
-          font: { size: 14, weight: 'bold' },
-        },
-        grid: { color: 'rgba(0, 0, 0, 0.1)' },
-      },
-      y: {
-        title: {
-          display: true,
-          text: 'RSSI (dBm)',
-          font: { size: 14, weight: 'bold' },
-        },
-        grid: { color: 'rgba(0, 0, 0, 0.1)' },
-        beginAtZero: false,
-      },
-    },
-    plugins: {
-      legend: {
-        display: true,
-        position: 'top',
-        labels: { font: { size: 14, weight: 'bold' } },
-      },
-      tooltip: {
-        backgroundColor: 'rgba(0, 0, 0, 0.8)',
-        titleColor: 'white',
-        bodyColor: 'white',
-        borderColor: boardId === 'Board 1' ? '#2196F3' : '#F44336',
-        borderWidth: 1,
-        cornerRadius: 8,
-        displayColors: true,
-      },
-    },
-    animation: { duration: 300, easing: 'easeInOutQuart' },
-  };
-
-  return (
-    <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-100">
-      <h3 className="text-xl font-bold text-gray-800 mb-6 pb-3 border-b-2 border-blue-500">
-        📊 Live RSSI Chart - {boardId}
-      </h3>
-      <div className="h-80">
-        <Line data={chartDataConfig} options={chartOptions} />
-      </div>
-    </div>
-  );
-};
-
-// LiveDataSection Component
-const LiveDataSection = ({ boardId, liveData, totalPackets, logs }) => (
-  <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-100">
-    <h3 className="text-xl font-bold text-gray-800 mb-6 pb-3 border-b-2 border-blue-500">
-      📡 Live LoRa Data - {boardId}
-    </h3>
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-      <div className="bg-gray-50 p-4 rounded-xl border-l-4 border-blue-500">
-        <div className="text-xs text-gray-600 uppercase tracking-wide mb-1">
-          Last RSSI
-        </div>
-        <div className="text-xl font-bold text-gray-800">
-          {liveData.lastRSSI !== null ? `${liveData.lastRSSI} dBm` : '- dBm'}
-        </div>
-      </div>
-      <div className="bg-gray-50 p-4 rounded-xl border-l-4 border-blue-500">
-        <div className="text-xs text-gray-600 uppercase tracking-wide mb-1">
-          Last SNR
-        </div>
-        <div className="text-xl font-bold text-gray-800">
-          {liveData.lastSNR !== null
-            ? `${liveData.lastSNR.toFixed(1)} dB`
-            : '- dB'}
-        </div>
-      </div>
-      <div className="bg-gray-50 p-4 rounded-xl border-l-4 border-blue-500">
-        <div className="text-xs text-gray-600 uppercase tracking-wide mb-1">
-          Packets Received
-        </div>
-        <div className="text-xl font-bold text-gray-800">{totalPackets}</div>
-      </div>
-      <div className="bg-gray-50 p-4 rounded-xl border-l-4 border-blue-500">
-        <div className="text-xs text-gray-600 uppercase tracking-wide mb-1">
-          Last Message
-        </div>
-        <div className="text-lg font-bold text-gray-800 truncate">
-          {liveData.lastMessage}
-        </div>
-      </div>
-    </div>
-    <div className="bg-black rounded-xl p-5 h-72 overflow-y-auto font-mono text-sm">
-      {logs.map((log) => (
-        <div
-          key={log.id}
-          className={`mb-1 p-1 rounded ${
-            log.type === 'error'
-              ? 'text-red-400 bg-red-400/10'
-              : log.type === 'warning'
-              ? 'text-yellow-400 bg-yellow-400/10'
-              : log.type === 'data'
-              ? 'text-cyan-400'
-              : 'text-green-400'
-          }`}
-        >
-          [{log.timestamp}] {log.message}
-        </div>
-      ))}
-      {logs.length === 0 && (
-        <div className="text-gray-500 text-center py-8">
-          Waiting for system logs...
-        </div>
-      )}
-    </div>
-  </div>
-);
-
-// Main Dashboard Component
 const ESP32LoRaDashboard = () => {
-  // MQTT Configuration
-  const DEFAULT_MQTT_BROKER = '10.214.162.1';
-  const MQTT_PORT = 9002;
+  // MQTT Configuration - matches your ESP32 setup
+  const MQTT_BROKER = '10.214.162.1'; // Update with your broker IP
+  const MQTT_PORT = 9002; // WebSocket port
   const CLIENT_ID = 'dashboard_' + Math.random().toString(16).substr(2, 8);
-  const BOARDS = ['Board 1', 'Board 2'];
-  const TOPIC_PREFIXES = {
-    'Board 1': 'esp32/board1',
-    'Board 2': 'esp32/board2',
-  };
+
+  // Board configuration - matches your ESP32 BOARD_ID
+  const BOARDS = ['board1', 'board2']; // Changed to match your ESP32 code
 
   // State management
-  const [mqttBroker, setMqttBroker] = useState(DEFAULT_MQTT_BROKER);
   const [isConnected, setIsConnected] = useState(false);
+  const [mqttReady, setMqttReady] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [ledState, setLedState] = useState({
-    'Board 1': false,
-    'Board 2': false,
+    board1: false,
+    board2: false,
   });
-  const [chartData, setChartData] = useState({ 'Board 1': [], 'Board 2': [] });
+  const [chartData, setChartData] = useState({
+    board1: [],
+    board2: [],
+  });
   const [totalPackets, setTotalPackets] = useState({
-    'Board 1': 0,
-    'Board 2': 0,
+    board1: 0,
+    board2: 0,
   });
   const [logs, setLogs] = useState([]);
   const [liveData, setLiveData] = useState({
-    'Board 1': { lastRSSI: null, lastSNR: null, lastMessage: '-' },
-    'Board 2': { lastRSSI: null, lastSNR: null, lastMessage: '-' },
+    board1: { lastRSSI: null, lastSNR: null, lastMessage: '-' },
+    board2: { lastRSSI: null, lastSNR: null, lastMessage: '-' },
   });
   const [systemData, setSystemData] = useState({
-    'Board 1': {
+    board1: {
       tracking: false,
       angle: 0,
       bestAngle: -1,
       bestRSSI: -999,
       loraActive: false,
     },
-    'Board 2': {
+    board2: {
       tracking: false,
       angle: 0,
       bestAngle: -1,
@@ -435,31 +56,39 @@ const ESP32LoRaDashboard = () => {
       loraActive: false,
     },
   });
+
   const mqttClientRef = useRef(null);
-  const retryCountRef = useRef(0);
-  const maxRetries = 5;
 
-  // Check for Paho MQTT library
+  // Load MQTT library only
   useEffect(() => {
-    if (window.Paho) {
+    const script = document.createElement('script');
+    script.src =
+      'https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js';
+    script.onload = () => {
+      setMqttReady(true);
       addLog('MQTT library loaded. Click Connect to start.', 'info');
-    } else {
-      addLog('Paho MQTT library not loaded. Please check index.html.', 'error');
-    }
+    };
+    script.onerror = () => {
+      addLog('Failed to load MQTT library', 'error');
+    };
+    document.head.appendChild(script);
 
+    // Cleanup
     return () => {
       if (mqttClientRef.current && isConnected) {
         try {
           mqttClientRef.current.disconnect();
-          addLog('Disconnected from MQTT broker during cleanup', 'info');
         } catch (error) {
           console.error('Error disconnecting MQTT:', error);
         }
       }
+      if (document.head.contains(script)) {
+        document.head.removeChild(script);
+      }
     };
   }, []);
 
-  const connectMQTT = (broker = mqttBroker) => {
+  const connectMQTT = () => {
     if (connecting || isConnected) return;
 
     try {
@@ -468,21 +97,31 @@ const ESP32LoRaDashboard = () => {
         return;
       }
 
+      if (!mqttReady) {
+        addLog('MQTT library not ready yet', 'warning');
+        return;
+      }
+
       setConnecting(true);
       mqttClientRef.current = new window.Paho.MQTT.Client(
-        broker,
+        MQTT_BROKER,
         MQTT_PORT,
         CLIENT_ID
       );
+
       mqttClientRef.current.onConnectionLost = onConnectionLost;
       mqttClientRef.current.onMessageArrived = onMessageArrived;
 
       const options = {
-        timeout: 30,
+        timeout: 10,
         onSuccess: onConnect,
         onFailure: onConnectFailure,
       };
-      addLog(`Connecting to MQTT broker at ${broker}:${MQTT_PORT}...`, 'info');
+
+      addLog(
+        `Connecting to MQTT broker at ${MQTT_BROKER}:${MQTT_PORT}...`,
+        'info'
+      );
       mqttClientRef.current.connect(options);
     } catch (error) {
       addLog('MQTT connection error: ' + error.message, 'error');
@@ -497,7 +136,6 @@ const ESP32LoRaDashboard = () => {
         addLog('Disconnected from MQTT broker', 'info');
         setIsConnected(false);
         setConnecting(false);
-        retryCountRef.current = 0;
       } catch (error) {
         addLog('Error disconnecting: ' + error.message, 'error');
       }
@@ -508,13 +146,16 @@ const ESP32LoRaDashboard = () => {
     addLog('Connected to MQTT broker successfully!', 'info');
     setIsConnected(true);
     setConnecting(false);
-    retryCountRef.current = 0;
 
-    const topics = BOARDS.flatMap((boardId) =>
-      ['status', 'lora/data', 'angle', 'rotation/complete', 'stored/data'].map(
-        (suffix) => `${TOPIC_PREFIXES[boardId]}/${suffix}`
-      )
-    );
+    // Subscribe to topics for all boards - matches your ESP32 topic structure
+    const topics = [];
+    BOARDS.forEach((boardId) => {
+      topics.push(`esp32/${boardId}/status`);
+      topics.push(`esp32/${boardId}/lora/data`); // This is the key topic for chart data
+      topics.push(`esp32/${boardId}/angle`);
+      topics.push(`esp32/${boardId}/rotation/complete`);
+      topics.push(`esp32/${boardId}/stored/data`);
+    });
 
     topics.forEach((topic) => {
       try {
@@ -528,89 +169,63 @@ const ESP32LoRaDashboard = () => {
 
   const onConnectFailure = (error) => {
     addLog(
-      `MQTT connection failed: ${
-        error.errorMessage || 'Network error or broker unavailable'
-      } (Error Code: ${error.errorCode})`,
+      'MQTT connection failed: ' +
+        (error.errorMessage || 'Network error or broker unavailable'),
       'error'
     );
     setIsConnected(false);
     setConnecting(false);
-    if (retryCountRef.current < maxRetries) {
-      retryCountRef.current++;
-      addLog(
-        `Retrying connection (${retryCountRef.current}/${maxRetries})...`,
-        'warning'
-      );
-      setTimeout(() => connectMQTT(mqttBroker), 5000);
-    } else {
-      addLog('Max retry attempts reached. Please check the broker.', 'error');
-    }
   };
 
   const onConnectionLost = (responseObject) => {
     if (responseObject.errorCode !== 0) {
-      addLog(
-        `MQTT connection lost: ${responseObject.errorMessage} (Error Code: ${responseObject.errorCode})`,
-        'error'
-      );
+      addLog('MQTT connection lost: ' + responseObject.errorMessage, 'error');
       setIsConnected(false);
       setConnecting(false);
-      if (retryCountRef.current < maxRetries) {
-        retryCountRef.current++;
-        addLog(
-          `Retrying connection (${retryCountRef.current}/${maxRetries})...`,
-          'warning'
-        );
-        setTimeout(() => connectMQTT(mqttBroker), 5000);
-      } else {
-        addLog('Max retry attempts reached. Please check the broker.', 'error');
-      }
     }
   };
 
   const onMessageArrived = (message) => {
     const topic = message.destinationName;
     const payload = message.payloadString;
-    const boardId = BOARDS.find((id) => topic.startsWith(TOPIC_PREFIXES[id]));
 
-    if (!boardId) {
-      addLog(`Received message from unknown topic: ${topic}`, 'warning');
+    // Extract board ID from topic (esp32/board1/... or esp32/board2/...)
+    const topicParts = topic.split('/');
+    const boardId = topicParts[1]; // board1 or board2
+
+    if (!BOARDS.includes(boardId)) {
+      addLog(`Received message from unknown board: ${boardId}`, 'warning');
       return;
     }
 
     try {
       const data = JSON.parse(payload);
       handleMQTTMessage(boardId, topic, data);
-    } catch {
+    } catch (error) {
+      // If JSON parsing fails, treat as plain text
       handleMQTTMessage(boardId, topic, payload);
     }
   };
 
   const handleMQTTMessage = (boardId, topic, data) => {
-    const topicSuffix = topic.split('/').pop();
-    switch (topicSuffix) {
-      case 'status':
-        handleStatusMessage(boardId, data);
-        break;
-      case 'data':
-        handleLoRaData(boardId, data);
-        break;
-      case 'angle':
-        setSystemData((prev) => ({
-          ...prev,
-          [boardId]: { ...prev[boardId], angle: parseInt(data) },
-        }));
-        break;
-      case 'complete':
-        handleRotationComplete(boardId, data);
-        break;
-      default:
-        addLog(
-          `[${boardId}] Received message from ${topic}: ${JSON.stringify(
-            data
-          )}`,
-          'info'
-        );
+    if (topic.includes('/status')) {
+      handleStatusMessage(boardId, data);
+    } else if (topic.includes('/lora/data')) {
+      handleLoRaData(boardId, data);
+    } else if (topic.includes('/angle')) {
+      setSystemData((prev) => ({
+        ...prev,
+        [boardId]: { ...prev[boardId], angle: parseInt(data) },
+      }));
+    } else if (topic.includes('/rotation/complete')) {
+      handleRotationComplete(boardId, data);
+    } else if (topic.includes('/stored/data')) {
+      handleStoredData(boardId, data);
+    } else {
+      addLog(
+        `[${boardId}] Received from ${topic}: ${JSON.stringify(data)}`,
+        'info'
+      );
     }
   };
 
@@ -636,6 +251,7 @@ const ESP32LoRaDashboard = () => {
   const handleLoRaData = (boardId, data) => {
     if (typeof data === 'object') {
       setTotalPackets((prev) => ({ ...prev, [boardId]: prev[boardId] + 1 }));
+
       setLiveData((prev) => ({
         ...prev,
         [boardId]: {
@@ -645,10 +261,12 @@ const ESP32LoRaDashboard = () => {
         },
       }));
 
+      // Update chart data - this is the critical part
       if (data.angle !== undefined && data.rssi !== undefined) {
         updateChart(boardId, data.angle, data.rssi);
       }
 
+      // Update best values
       if (
         data.best_rssi_at_angle &&
         data.best_rssi_at_angle > systemData[boardId].bestRSSI
@@ -664,7 +282,7 @@ const ESP32LoRaDashboard = () => {
       }
 
       addLog(
-        `[${boardId}] 📦 Angle ${data.angle}° | RSSI: ${
+        `[${boardId}] Angle ${data.angle}° | RSSI: ${
           data.rssi
         } dBm | SNR: ${data.snr?.toFixed(1)} dB`,
         'data'
@@ -675,7 +293,7 @@ const ESP32LoRaDashboard = () => {
   const handleRotationComplete = (boardId, data) => {
     if (typeof data === 'object') {
       addLog(
-        `[${boardId}] 🎯 Rotation Complete! Best: ${data.best_rssi} dBm at ${data.best_angle}°`,
+        `[${boardId}] Rotation Complete! Best: ${data.best_rssi} dBm at ${data.best_angle}°`,
         'info'
       );
       setSystemData((prev) => ({
@@ -693,7 +311,7 @@ const ESP32LoRaDashboard = () => {
   const handleStoredData = (boardId, data) => {
     if (typeof data === 'object') {
       addLog(
-        `[${boardId}] 📊 Received stored data chunk: ${data.chunk_start}-${data.chunk_end}`,
+        `[${boardId}] Best angle data: Angle ${data.angle}°, RSSI ${data.rssi} dBm`,
         'info'
       );
     }
@@ -708,13 +326,15 @@ const ESP32LoRaDashboard = () => {
       let newBoardData;
 
       if (existingIndex !== -1) {
+        // Update if this is a better RSSI for the same angle
         if (rssi > prevBoardData[existingIndex].rssi) {
           newBoardData = [...prevBoardData];
           newBoardData[existingIndex] = { angle, rssi };
         } else {
-          newBoardData = prevBoardData;
+          return prevData; // No change needed
         }
       } else {
+        // Add new data point
         newBoardData = [...prevBoardData, { angle, rssi }];
       }
 
@@ -731,7 +351,7 @@ const ESP32LoRaDashboard = () => {
       return;
     }
 
-    const topic = `${TOPIC_PREFIXES[boardId]}/${topicSuffix}`;
+    const topic = `esp32/${boardId}/${topicSuffix}`;
     try {
       const msg = new window.Paho.MQTT.Message(message);
       msg.destinationName = topic;
@@ -747,10 +367,20 @@ const ESP32LoRaDashboard = () => {
 
   const addLog = (message, type = 'info') => {
     const timestamp = new Date().toLocaleTimeString();
-    const newLog = { id: Date.now() + Math.random(), timestamp, message, type };
-    setLogs((prevLogs) => [...prevLogs, newLog].slice(-100));
+    const newLog = {
+      id: Date.now() + Math.random(),
+      timestamp,
+      message,
+      type,
+    };
+
+    setLogs((prevLogs) => {
+      const updatedLogs = [...prevLogs, newLog];
+      return updatedLogs.slice(-100); // Keep only last 100 entries
+    });
   };
 
+  // Control functions
   const startTracking = (boardId) => {
     if (!isConnected) {
       addLog(
@@ -760,7 +390,7 @@ const ESP32LoRaDashboard = () => {
       return;
     }
     publishMessage(boardId, 'start', '1');
-    addLog(`[${boardId}] 🚀 Starting tracking...`, 'info');
+    addLog(`[${boardId}] Starting tracking...`, 'info');
   };
 
   const stopTracking = (boardId) => {
@@ -772,7 +402,7 @@ const ESP32LoRaDashboard = () => {
       return;
     }
     publishMessage(boardId, 'stop', '1');
-    addLog(`[${boardId}] ⏹️ Stopping tracking...`, 'info');
+    addLog(`[${boardId}] Stopping tracking...`, 'info');
   };
 
   const resetSystem = (boardId) => {
@@ -781,12 +411,19 @@ const ESP32LoRaDashboard = () => {
       return;
     }
     publishMessage(boardId, 'reset', '1');
-    addLog(`[${boardId}] 🔄 Resetting system...`, 'info');
+    addLog(`[${boardId}] Resetting system...`, 'info');
+
+    // Clear local data
     setChartData((prev) => ({ ...prev, [boardId]: [] }));
     setTotalPackets((prev) => ({ ...prev, [boardId]: 0 }));
     setSystemData((prev) => ({
       ...prev,
-      [boardId]: { ...prev[boardId], bestAngle: -1, bestRSSI: -999, angle: 0 },
+      [boardId]: {
+        ...prev[boardId],
+        bestAngle: -1,
+        bestRSSI: -999,
+        angle: 0,
+      },
     }));
     setLiveData((prev) => ({
       ...prev,
@@ -799,73 +436,369 @@ const ESP32LoRaDashboard = () => {
       addLog(`[${boardId}] Cannot toggle LED: MQTT not connected`, 'warning');
       return;
     }
-    setLedState((prev) => {
-      const newLedState = !prev[boardId];
-      publishMessage(boardId, 'led', newLedState ? 'ON' : 'OFF');
-      addLog(
-        `[${boardId}] 💡 LED turned ${newLedState ? 'ON' : 'OFF'}`,
-        'info'
-      );
-      return { ...prev, [boardId]: newLedState };
-    });
+    const newLedState = !ledState[boardId];
+    setLedState((prev) => ({ ...prev, [boardId]: newLedState }));
+    publishMessage(boardId, 'led', newLedState ? 'ON' : 'OFF');
+    addLog(`[${boardId}] LED turned ${newLedState ? 'ON' : 'OFF'}`, 'info');
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600 p-5">
       <div className="max-w-7xl mx-auto bg-white/95 rounded-3xl shadow-2xl backdrop-blur-lg overflow-hidden">
-        <Header
-          isConnected={isConnected}
-          connecting={connecting}
-          systemData={systemData}
-          mqttBroker={mqttBroker}
-          setMqttBroker={setMqttBroker}
-          connectMQTT={connectMQTT}
-        />
-        <div className="p-8">
-          <div className="mb-8">
-            <button
-              onClick={() => connectMQTT(mqttBroker)}
-              disabled={connecting || isConnected}
-              className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-6 py-4 rounded-xl font-semibold hover:from-blue-600 hover:to-blue-700 transform hover:-translate-y-1 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg w-full"
+        {/* Header */}
+        <div className="bg-gradient-to-r from-blue-500 to-cyan-500 text-white p-8 text-center relative overflow-hidden">
+          <div className="absolute inset-0 opacity-30">
+            <svg className="w-full h-full" viewBox="0 0 100 100">
+              <defs>
+                <pattern
+                  id="grid"
+                  width="10"
+                  height="10"
+                  patternUnits="userSpaceOnUse"
+                >
+                  <path
+                    d="M 10 0 L 0 0 0 10"
+                    fill="none"
+                    stroke="rgba(255,255,255,0.1)"
+                    strokeWidth="1"
+                  />
+                </pattern>
+              </defs>
+              <rect width="100" height="100" fill="url(#grid)" />
+            </svg>
+          </div>
+
+          <h1 className="text-4xl font-bold mb-4 relative z-10">
+            ESP32 LoRa Tracker Dashboard
+          </h1>
+
+          <div className="absolute top-5 right-5 z-10">
+            <span
+              className={`px-4 py-2 rounded-full text-sm font-bold ${
+                connecting
+                  ? 'bg-yellow-500'
+                  : isConnected
+                  ? 'bg-green-500'
+                  : 'bg-red-500'
+              }`}
             >
-              {connecting ? '🔄 Connecting...' : '🔌 Connect to MQTT'}
-            </button>
-            {isConnected && (
+              {connecting
+                ? 'MQTT Connecting...'
+                : isConnected
+                ? 'MQTT Connected'
+                : 'MQTT Disconnected'}
+            </span>
+          </div>
+
+          <div className="flex flex-wrap justify-center gap-3 relative z-10">
+            <span
+              className={`px-4 py-2 rounded-full text-sm font-bold ${
+                connecting
+                  ? 'bg-yellow-500'
+                  : isConnected
+                  ? 'bg-green-500'
+                  : 'bg-red-500'
+              }`}
+            >
+              MQTT:{' '}
+              {connecting
+                ? 'Connecting...'
+                : isConnected
+                ? 'Connected'
+                : 'Disconnected'}
+            </span>
+
+            {BOARDS.map((boardId) => (
+              <div key={boardId} className="flex gap-2">
+                <span
+                  className={`px-4 py-2 rounded-full text-sm font-bold ${
+                    systemData[boardId].tracking
+                      ? 'bg-orange-500'
+                      : 'bg-gray-500'
+                  }`}
+                >
+                  {boardId}:{' '}
+                  {systemData[boardId].tracking ? 'Tracking' : 'Idle'}
+                </span>
+                <span
+                  className={`px-4 py-2 rounded-full text-sm font-bold ${
+                    systemData[boardId].loraActive
+                      ? 'bg-green-500'
+                      : 'bg-red-500'
+                  }`}
+                >
+                  LoRa: {systemData[boardId].loraActive ? 'Active' : 'Inactive'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Dashboard Content */}
+        <div className="p-8">
+          {/* Connection Control */}
+          <div className="mb-8 text-center">
+            {!isConnected ? (
+              <button
+                onClick={connectMQTT}
+                disabled={!mqttReady || connecting}
+                className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-8 py-4 rounded-xl font-semibold hover:from-blue-600 hover:to-blue-700 transform hover:-translate-y-1 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg"
+              >
+                {connecting ? 'Connecting...' : 'Connect to MQTT'}
+              </button>
+            ) : (
               <button
                 onClick={disconnectMQTT}
-                className="mt-4 bg-gradient-to-r from-gray-500 to-gray-600 text-white px-6 py-4 rounded-xl font-semibold hover:from-gray-600 hover:to-gray-700 transform hover:-translate-y-1 transition-all duration-300 shadow-lg w-full"
+                className="bg-gradient-to-r from-red-500 to-red-600 text-white px-8 py-4 rounded-xl font-semibold hover:from-red-600 hover:to-red-700 transform hover:-translate-y-1 transition-all duration-300 shadow-lg"
               >
-                🔌 Disconnect MQTT
+                Disconnect MQTT
               </button>
             )}
           </div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            {BOARDS.map((boardId) => (
-              <div key={boardId} className="space-y-8">
-                <ControlPanel
-                  boardId={boardId}
-                  isConnected={isConnected}
-                  connecting={connecting}
-                  systemData={systemData}
-                  startTracking={startTracking}
-                  stopTracking={stopTracking}
-                  resetSystem={resetSystem}
-                  toggleLED={toggleLED}
-                />
-                <LiveChart
-                  boardId={boardId}
-                  chartData={chartData[boardId] || []}
-                />
-                <LiveDataSection
-                  boardId={boardId}
-                  liveData={liveData[boardId]}
-                  totalPackets={totalPackets[boardId]}
-                  logs={logs.filter((log) =>
-                    log.message.includes(`[${boardId}]`)
-                  )}
-                />
+
+          {/* Board Controls and Charts */}
+          {BOARDS.map((boardId) => {
+            const progress = Math.round(
+              (systemData[boardId].angle / 180) * 100
+            );
+
+            return (
+              <div
+                key={boardId}
+                className="mb-12 bg-white rounded-2xl p-6 shadow-lg border border-gray-100"
+              >
+                <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center border-b-2 border-blue-500 pb-3">
+                  Board: {boardId.toUpperCase()}
+                </h2>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                  {/* Control Panel */}
+                  <div className="space-y-6">
+                    <h3 className="text-xl font-bold text-gray-800">
+                      Control Panel
+                    </h3>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <button
+                        onClick={() => startTracking(boardId)}
+                        disabled={!isConnected || systemData[boardId].tracking}
+                        className="bg-gradient-to-r from-green-500 to-green-600 text-white px-6 py-3 rounded-xl font-semibold hover:from-green-600 hover:to-green-700 transform hover:-translate-y-1 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg"
+                      >
+                        Start Tracking
+                      </button>
+                      <button
+                        onClick={() => stopTracking(boardId)}
+                        disabled={!isConnected || !systemData[boardId].tracking}
+                        className="bg-gradient-to-r from-red-500 to-red-600 text-white px-6 py-3 rounded-xl font-semibold hover:from-red-600 hover:to-red-700 transform hover:-translate-y-1 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg"
+                      >
+                        Stop Tracking
+                      </button>
+                      <button
+                        onClick={() => resetSystem(boardId)}
+                        disabled={!isConnected}
+                        className="bg-gradient-to-r from-orange-500 to-orange-600 text-white px-6 py-3 rounded-xl font-semibold hover:from-orange-600 hover:to-orange-700 transform hover:-translate-y-1 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg"
+                      >
+                        Reset System
+                      </button>
+                      <button
+                        onClick={() => toggleLED(boardId)}
+                        disabled={!isConnected}
+                        className="bg-gradient-to-r from-gray-500 to-gray-600 text-white px-6 py-3 rounded-xl font-semibold hover:from-gray-600 hover:to-gray-700 transform hover:-translate-y-1 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg"
+                      >
+                        Toggle LED
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="bg-gray-50 p-4 rounded-xl border-l-4 border-blue-500">
+                        <div className="text-xs text-gray-600 uppercase tracking-wide mb-1">
+                          Current Angle
+                        </div>
+                        <div className="text-xl font-bold text-gray-800">
+                          {systemData[boardId].angle}°
+                        </div>
+                      </div>
+                      <div className="bg-gray-50 p-4 rounded-xl border-l-4 border-blue-500">
+                        <div className="text-xs text-gray-600 uppercase tracking-wide mb-1">
+                          Progress
+                        </div>
+                        <div className="text-xl font-bold text-gray-800">
+                          {progress}%
+                        </div>
+                      </div>
+                      <div className="bg-gray-50 p-4 rounded-xl border-l-4 border-blue-500">
+                        <div className="text-xs text-gray-600 uppercase tracking-wide mb-1">
+                          Best Angle
+                        </div>
+                        <div className="text-xl font-bold text-gray-800">
+                          {systemData[boardId].bestAngle >= 0
+                            ? `${systemData[boardId].bestAngle}°`
+                            : '-'}
+                        </div>
+                      </div>
+                      <div className="bg-gray-50 p-4 rounded-xl border-l-4 border-blue-500">
+                        <div className="text-xs text-gray-600 uppercase tracking-wide mb-1">
+                          Best RSSI
+                        </div>
+                        <div className="text-xl font-bold text-gray-800">
+                          {systemData[boardId].bestRSSI > -999
+                            ? `${systemData[boardId].bestRSSI} dBm`
+                            : '- dBm'}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="w-full h-5 bg-gray-200 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-green-500 to-green-600 transition-all duration-300 ease-in-out"
+                        style={{ width: `${progress}%` }}
+                      ></div>
+                    </div>
+                  </div>
+
+                  {/* Live Chart */}
+                  <div className="space-y-4">
+                    <h3 className="text-xl font-bold text-gray-800">
+                      Live RSSI Chart
+                    </h3>
+                    <div className="h-80">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={chartData[boardId]}>
+                          <CartesianGrid
+                            strokeDasharray="3 3"
+                            stroke="#e0e0e0"
+                          />
+                          <XAxis
+                            dataKey="angle"
+                            label={{
+                              value: 'Angle (degrees)',
+                              position: 'insideBottom',
+                              offset: -10,
+                            }}
+                            stroke="#666"
+                          />
+                          <YAxis
+                            label={{
+                              value: 'RSSI (dBm)',
+                              angle: -90,
+                              position: 'insideLeft',
+                            }}
+                            stroke="#666"
+                          />
+                          <Tooltip
+                            contentStyle={{
+                              backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                              color: 'white',
+                              border: '1px solid #2196F3',
+                              borderRadius: '8px',
+                            }}
+                            formatter={(value) => [`${value} dBm`, 'RSSI']}
+                            labelFormatter={(label) => `Angle: ${label}°`}
+                          />
+                          <Legend />
+                          <Line
+                            type="monotone"
+                            dataKey="rssi"
+                            stroke={
+                              boardId === 'board1' ? '#2196F3' : '#f44336'
+                            }
+                            strokeWidth={3}
+                            dot={{
+                              fill:
+                                boardId === 'board1' ? '#2196F3' : '#f44336',
+                              strokeWidth: 2,
+                              r: 4,
+                            }}
+                            activeDot={{
+                              r: 6,
+                              stroke:
+                                boardId === 'board1' ? '#2196F3' : '#f44336',
+                              strokeWidth: 2,
+                            }}
+                            name="RSSI (dBm)"
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Live Data */}
+                <div className="mt-8">
+                  <h3 className="text-xl font-bold text-gray-800 mb-4">
+                    Live LoRa Data
+                  </h3>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="bg-gray-50 p-4 rounded-xl border-l-4 border-blue-500">
+                      <div className="text-xs text-gray-600 uppercase tracking-wide mb-1">
+                        Last RSSI
+                      </div>
+                      <div className="text-xl font-bold text-gray-800">
+                        {liveData[boardId].lastRSSI !== null
+                          ? `${liveData[boardId].lastRSSI} dBm`
+                          : '- dBm'}
+                      </div>
+                    </div>
+                    <div className="bg-gray-50 p-4 rounded-xl border-l-4 border-blue-500">
+                      <div className="text-xs text-gray-600 uppercase tracking-wide mb-1">
+                        Last SNR
+                      </div>
+                      <div className="text-xl font-bold text-gray-800">
+                        {liveData[boardId].lastSNR !== null
+                          ? `${liveData[boardId].lastSNR.toFixed(1)} dB`
+                          : '- dB'}
+                      </div>
+                    </div>
+                    <div className="bg-gray-50 p-4 rounded-xl border-l-4 border-blue-500">
+                      <div className="text-xs text-gray-600 uppercase tracking-wide mb-1">
+                        Packets Received
+                      </div>
+                      <div className="text-xl font-bold text-gray-800">
+                        {totalPackets[boardId]}
+                      </div>
+                    </div>
+                    <div className="bg-gray-50 p-4 rounded-xl border-l-4 border-blue-500">
+                      <div className="text-xs text-gray-600 uppercase tracking-wide mb-1">
+                        Last Message
+                      </div>
+                      <div className="text-lg font-bold text-gray-800 truncate">
+                        {liveData[boardId].lastMessage}
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
-            ))}
+            );
+          })}
+
+          {/* System Logs */}
+          <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-100">
+            <h3 className="text-xl font-bold text-gray-800 mb-6 pb-3 border-b-2 border-blue-500">
+              System Logs
+            </h3>
+            <div className="bg-black rounded-xl p-5 h-72 overflow-y-auto font-mono text-sm">
+              {logs.map((log) => (
+                <div
+                  key={log.id}
+                  className={`mb-1 p-1 rounded ${
+                    log.type === 'error'
+                      ? 'text-red-400 bg-red-400/10'
+                      : log.type === 'warning'
+                      ? 'text-yellow-400 bg-yellow-400/10'
+                      : log.type === 'data'
+                      ? 'text-cyan-400'
+                      : 'text-green-400'
+                  }`}
+                >
+                  [{log.timestamp}] {log.message}
+                </div>
+              ))}
+              {logs.length === 0 && (
+                <div className="text-gray-500 text-center py-8">
+                  Waiting for system logs...
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

@@ -1,6 +1,6 @@
 #include <WiFi.h>
 #include <ArduinoOTA.h>
-#include <AsyncMqttClient.h>
+#include <PubSubClient.h>
 #include <SPI.h>
 #include <LoRa.h>
 #include <ESP32Servo.h>
@@ -15,12 +15,12 @@ const char* password = "GladToConnectYou";
 // -----------------
 // MQTT broker setup
 // -----------------
-const char* MQTT_BROKER = "10.214.162.1";  // Default MQTT broker IP
-const int MQTT_PORT = 9002;                 // WebSocket port
-const char* BOARD_ID = "board1";            // Change to "board2" for second board
+const char* mqtt_server = "10.214.162.1";  // MQTT broker IP
+const int mqtt_port = 1883;                // TCP MQTT port
+const char* BOARD_ID = "board2";           // Change to "board2" for second board
 
-AsyncMqttClient mqttClient;
-WiFiClient wifiClient;
+WiFiClient espClient;
+PubSubClient client(espClient);
 
 // -----------------
 // Pin Definitions
@@ -43,72 +43,88 @@ bool loraInitialized = false;
 int currentAngle = 0;
 const int MAX_ANGLE = 180;
 const int SERVO_STEP = 1;
-const int ANGLE_WAIT_TIME = 2000;  // 2 seconds per angle
 unsigned long angleStartTime = 0;
 unsigned long lastStatusTime = 0;
 unsigned long lastSignalTime = 0;
+const int NO_SIGNAL_WAIT = 500;  // Wait 500ms at each angle if no packet received
 
 // -----------------
 // Data Storage for Safety
 // -----------------
-int bestRSSI[MAX_ANGLE + 1];  // Store best RSSI for each angle (0-180)
+int bestRSSI[MAX_ANGLE + 1];  // Store best RSSI for each angle (0-180), -999 if no signal
 int packetCount[MAX_ANGLE + 1];  // Count packets received at each angle
 bool rotationComplete = false;
 
 // -----------------
-// MQTT Topics
+// MQTT Topics (Board-Specific)
 // -----------------
-String TOPIC_LED = String("esp32/") + BOARD_ID + "/led";
-String TOPIC_START = String("esp32/") + BOARD_ID + "/start";
-String TOPIC_STOP = String("esp32/") + BOARD_ID + "/stop";
-String TOPIC_RESET = String("esp32/") + BOARD_ID + "/reset";
-String TOPIC_STATUS = String("esp32/") + BOARD_ID + "/status";
-String TOPIC_LORA_DATA = String("esp32/") + BOARD_ID + "/lora/data";
-String TOPIC_ANGLE = String("esp32/") + BOARD_ID + "/angle";
-String TOPIC_ROTATION_COMPLETE = String("esp32/") + BOARD_ID + "/rotation/complete";
-String TOPIC_STORED_DATA = String("esp32/") + BOARD_ID + "/stored/data";
+const char* TOPIC_LED = "esp32/%s/led";
+const char* TOPIC_START = "esp32/%s/start";
+const char* TOPIC_STOP = "esp32/%s/stop";
+const char* TOPIC_RESET = "esp32/%s/reset";
+const char* TOPIC_STATUS = "esp32/%s/status";
+const char* TOPIC_LORA_DATA = "esp32/%s/lora/data";
+const char* TOPIC_ANGLE = "esp32/%s/angle";
+const char* TOPIC_ROTATION_COMPLETE = "esp32/%s/rotation/complete";
+const char* TOPIC_STORED_DATA = "esp32/%s/stored/data";
 
-// -----------------
-// MQTT Functions
-// -----------------
-void connectToMqtt() {
-  Serial.println("Connecting to MQTT...");
-  mqttClient.connect();
+// Helper to format topics with BOARD_ID
+char topicBuffer[128];
+void formatTopic(const char* format, const char* id) {
+  snprintf(topicBuffer, sizeof(topicBuffer), format, id);
 }
 
-void onMqttConnect(bool sessionPresent) {
-  Serial.println("Connected to MQTT.");
-  publishStatus("Connected and ready");
+#define GET_TOPIC(FORMAT) (formatTopic((FORMAT), BOARD_ID), topicBuffer)
 
-  // Subscribe to control topics
-  mqttClient.subscribe(TOPIC_LED.c_str(), 1);
-  mqttClient.subscribe(TOPIC_START.c_str(), 1);
-  mqttClient.subscribe(TOPIC_STOP.c_str(), 1);
-  mqttClient.subscribe(TOPIC_RESET.c_str(), 1);
-}
+// -----------------
+// Reconnect function for MQTT
+// -----------------
+void reconnectMQTT() {
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    String clientId = String("ESP32LoRaTracker_") + BOARD_ID;
+    if (client.connect(clientId.c_str())) {
+      Serial.println("connected");
 
-void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
-  Serial.printf("Disconnected from MQTT: %u. Reconnecting...\n", (uint8_t)reason);
-  if (WiFi.status() == WL_CONNECTED) {
-    connectToMqtt();
+      // Subscribe to control topics
+      client.subscribe(GET_TOPIC(TOPIC_LED));
+      client.subscribe(GET_TOPIC(TOPIC_START));
+      client.subscribe(GET_TOPIC(TOPIC_STOP));
+      client.subscribe(GET_TOPIC(TOPIC_RESET));
+
+      // Publish connection status
+      publishStatus("Connected and ready");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      delay(5000);
+    }
   }
 }
 
-void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties properties, size_t len, size_t index, size_t total) {
-  String msg = String(payload).substring(0, len);
+// -----------------
+// MQTT Callback
+// -----------------
+void callback(char* topic, byte* payload, unsigned int length) {
+  String msg;
+  for (unsigned int i = 0; i < length; i++) {
+    msg += (char)payload[i];
+  }
+
   Serial.printf("Message arrived [%s] %s\n", topic, msg.c_str());
 
-  if (String(topic) == TOPIC_LED) {
+  if (String(topic) == String(GET_TOPIC(TOPIC_LED))) {
     if (msg == "ON") {
       digitalWrite(ledPin, HIGH);
     } else if (msg == "OFF") {
       digitalWrite(ledPin, LOW);
     }
-  } else if (String(topic) == TOPIC_START) {
+  } else if (String(topic) == String(GET_TOPIC(TOPIC_START))) {
     startTracking();
-  } else if (String(topic) == TOPIC_STOP) {
+  } else if (String(topic) == String(GET_TOPIC(TOPIC_STOP))) {
     stopTracking();
-  } else if (String(topic) == TOPIC_RESET) {
+  } else if (String(topic) == String(GET_TOPIC(TOPIC_RESET))) {
     resetSystem();
   }
 }
@@ -169,10 +185,15 @@ void handleLoRaReception() {
 
     String jsonString;
     serializeJson(doc, jsonString);
-    mqttClient.publish(TOPIC_LORA_DATA.c_str(), 1, false, jsonString.c_str());
+    client.publish(GET_TOPIC(TOPIC_LORA_DATA), jsonString.c_str());
 
     Serial.printf("📦 Angle %d° | RSSI: %d dBm | Best: %d dBm | SNR: %.2f | Packets: %d | Data: %s\n",
                   currentAngle, rssi, bestRSSI[currentAngle], snr, packetCount[currentAngle], message.c_str());
+
+    // Move to next angle immediately after receiving a packet
+    if (isTracking) {
+      moveToNextAngle();
+    }
   }
 }
 
@@ -188,27 +209,32 @@ void moveServoToAngle(int targetAngle) {
   currentAngle = targetAngle;
 
   // Publish current angle
-  mqttClient.publish(TOPIC_ANGLE.c_str(), 1, false, String(currentAngle).c_str());
+  client.publish(GET_TOPIC(TOPIC_ANGLE), String(currentAngle).c_str());
   delay(500);  // Allow servo to move
+}
+
+void moveToNextAngle() {
+  currentAngle += SERVO_STEP;
+
+  if (currentAngle > MAX_ANGLE) {
+    stopTracking();
+    publishRotationComplete();
+    publishStoredData();
+    publishStatus("Tracking completed - Full rotation finished");
+    return;
+  }
+
+  moveServoToAngle(currentAngle);
+  angleStartTime = millis();
+  Serial.printf("📍 Now scanning at angle: %d°\n", currentAngle);
 }
 
 void handleServoTracking() {
   if (!isTracking) return;
 
-  if (millis() - angleStartTime >= ANGLE_WAIT_TIME) {
-    currentAngle += SERVO_STEP;
-
-    if (currentAngle > MAX_ANGLE) {
-      stopTracking();
-      publishRotationComplete();
-      publishStoredData();
-      publishStatus("Tracking completed - Full rotation finished");
-      return;
-    }
-
-    moveServoToAngle(currentAngle);
-    angleStartTime = millis();
-    Serial.printf("📍 Now scanning at angle: %d°\n", currentAngle);
+  // If no packet received after NO_SIGNAL_WAIT, move to next angle
+  if (millis() - angleStartTime >= NO_SIGNAL_WAIT) {
+    moveToNextAngle();
   }
 }
 
@@ -228,7 +254,7 @@ void startTracking() {
 
   // Initialize data arrays
   for (int i = 0; i <= MAX_ANGLE; i++) {
-    bestRSSI[i] = -999;
+    bestRSSI[i] = -999;  // -999 indicates no signal
     packetCount[i] = 0;
   }
 
@@ -249,7 +275,7 @@ void stopTracking() {
   }
 
   isTracking = false;
-  rotationComplete = (currentAngle > MAX_ANGLE);
+  rotationComplete = (currentAngle >= MAX_ANGLE);
 
   if (rotationComplete) {
     publishRotationComplete();
@@ -306,35 +332,43 @@ void publishRotationComplete() {
 
   String jsonString;
   serializeJson(doc, jsonString);
-  mqttClient.publish(TOPIC_ROTATION_COMPLETE.c_str(), 1, false, jsonString.c_str());
+  client.publish(GET_TOPIC(TOPIC_ROTATION_COMPLETE), jsonString.c_str());
   Serial.printf("🎯 Rotation Complete! Best signal: %d dBm at %d°\n", bestOverallRSSI, bestOverallAngle);
 }
 
 void publishStoredData() {
-  const int CHUNK_SIZE = 20;  // Send 20 angles at a time
-  for (int chunk = 0; chunk <= MAX_ANGLE; chunk += CHUNK_SIZE) {
-    DynamicJsonDocument doc(1024);
-    doc["chunk_start"] = chunk;
-    doc["chunk_end"] = min(chunk + CHUNK_SIZE - 1, MAX_ANGLE);
-    doc["total_angles"] = MAX_ANGLE + 1;
-    doc["timestamp"] = millis();
+  // Find the best angle and RSSI
+  int bestAngle = -1;
+  int bestRSSIValue = -999;
+  int packetCountAtBest = 0;
 
-    JsonArray angles = doc.createNestedArray("angles");
-    JsonArray rssi_values = doc.createNestedArray("rssi_values");
-    JsonArray packet_counts = doc.createNestedArray("packet_counts");
-
-    for (int i = chunk; i <= min(chunk + CHUNK_SIZE - 1, MAX_ANGLE); i++) {
-      angles.add(i);
-      rssi_values.add(bestRSSI[i]);
-      packet_counts.add(packetCount[i]);
+  for (int i = 0; i <= MAX_ANGLE; i++) {
+    if (bestRSSI[i] > bestRSSIValue) {
+      bestRSSIValue = bestRSSI[i];
+      bestAngle = i;
+      packetCountAtBest = packetCount[i];
     }
-
-    String jsonString;
-    serializeJson(doc, jsonString);
-    mqttClient.publish(TOPIC_STORED_DATA.c_str(), 1, false, jsonString.c_str());
-    delay(100);  // Small delay between chunks
   }
-  Serial.println("📊 All stored data published via MQTT");
+
+  // Publish only the best angle data
+  DynamicJsonDocument doc(256);
+  doc["message"] = "Best angle data";
+  doc["timestamp"] = millis();
+  if (bestAngle >= 0) {
+    doc["angle"] = bestAngle;
+    doc["rssi"] = bestRSSIValue;
+    doc["packet_count"] = packetCountAtBest;
+  } else {
+    doc["angle"] = nullptr;  // No valid data
+    doc["rssi"] = nullptr;
+    doc["packet_count"] = 0;
+  }
+
+  String jsonString;
+  serializeJson(doc, jsonString);
+  client.publish(GET_TOPIC(TOPIC_STORED_DATA), jsonString.c_str());
+  Serial.printf("📊 Published best angle data: Angle %d°, RSSI %d dBm, Packets %d\n",
+                bestAngle, bestRSSIValue, packetCountAtBest);
 }
 
 // -----------------
@@ -353,15 +387,19 @@ void publishStatus(String message) {
   if (currentAngle >= 0 && currentAngle <= MAX_ANGLE) {
     doc["current_best_rssi"] = bestRSSI[currentAngle];
     doc["current_packet_count"] = packetCount[currentAngle];
+  } else {
+    doc["current_best_rssi"] = nullptr;
+    doc["current_packet_count"] = 0;
   }
 
   String jsonString;
   serializeJson(doc, jsonString);
-  mqttClient.publish(TOPIC_STATUS.c_str(), 1, false, jsonString.c_str());
+  client.publish(GET_TOPIC(TOPIC_STATUS), jsonString.c_str());
 }
 
 void setup() {
   Serial.begin(115200);
+  while (!Serial && millis() < 5000);
   delay(1000);
 
   // Initialize pins
@@ -402,35 +440,39 @@ void setup() {
   initializeLoRa();
 
   // MQTT setup
-  mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
-  mqttClient.setClientId(String("ESP32LoRaTracker_") + BOARD_ID);
-  mqttClient.onConnect(onMqttConnect);
-  mqttClient.onDisconnect(onMqttDisconnect);
-  mqttClient.onMessage(onMqttMessage);
-  connectToMqtt();
+  client.setServer(mqtt_server, mqtt_port);
+  client.setCallback(callback);
 
   // Initialize data storage arrays
   for (int i = 0; i <= MAX_ANGLE; i++) {
-    bestRSSI[i] = -999;
+    bestRSSI[i] = -999;  // -999 indicates no signal
     packetCount[i] = 0;
   }
   rotationComplete = false;
 
   Serial.println("🌟 ESP32 LoRa MQTT Tracker Ready!");
+  Serial.printf("📡 Board ID: %s\n", BOARD_ID);
   Serial.println("📡 MQTT Topics:");
-  Serial.println("  • " + TOPIC_START + " - Start tracking");
-  Serial.println("  • " + TOPIC_STOP + " - Stop tracking");
-  Serial.println("  • " + TOPIC_RESET + " - Reset to 0°");
-  Serial.println("  • " + TOPIC_LED + " - Control LED (ON/OFF)");
-  Serial.println("  • " + TOPIC_STATUS + " - Status updates");
-  Serial.println("  • " + TOPIC_LORA_DATA + " - Live LoRa data");
-  Serial.println("  • " + TOPIC_ANGLE + " - Current angle");
-  Serial.println("  • " + TOPIC_ROTATION_COMPLETE + " - Rotation summary");
-  Serial.println("  • " + TOPIC_STORED_DATA + " - Stored RSSI data");
+  Serial.printf("  • %s - Start tracking\n", GET_TOPIC(TOPIC_START));
+  Serial.printf("  • %s - Stop tracking\n", GET_TOPIC(TOPIC_STOP));
+  Serial.printf("  • %s - Reset to 0°\n", GET_TOPIC(TOPIC_RESET));
+  Serial.printf("  • %s - Control LED (ON/OFF)\n", GET_TOPIC(TOPIC_LED));
+  Serial.printf("  • %s - Status updates\n", GET_TOPIC(TOPIC_STATUS));
+  Serial.printf("  • %s - Live LoRa data\n", GET_TOPIC(TOPIC_LORA_DATA));
+  Serial.printf("  • %s - Current angle\n", GET_TOPIC(TOPIC_ANGLE));
+  Serial.printf("  • %s - Rotation summary\n", GET_TOPIC(TOPIC_ROTATION_COMPLETE));
+  Serial.printf("  • %s - Best angle data\n", GET_TOPIC(TOPIC_STORED_DATA));
 }
 
 void loop() {
   ArduinoOTA.handle();
+
+  // Ensure MQTT stays connected
+  if (!client.connected()) {
+    reconnectMQTT();
+  }
+  client.loop();
+
   handleServoTracking();
   handleLoRaReception();
 
