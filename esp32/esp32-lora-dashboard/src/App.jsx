@@ -55,41 +55,22 @@ const App = () => {
     },
   });
 
-  // NEW: Calculate best angle from fitted curve
-  const getBestAngle = (boardId) => {
-    const fittedCurve = fitCurve(boardId);
-    if (fittedCurve.length === 0) return { angle: -1, rssi: -999 };
-    const bestPoint = fittedCurve.reduce(
-      (max, point) => (point.rssi > max.rssi ? point : max),
-      { angle: -1, rssi: -999 }
+  // Handle best angle updates from LiveChart
+  const handleBestAngleUpdate = (boardId, bestAngle) => {
+    setSystemData((prev) => ({
+      ...prev,
+      [boardId]: {
+        ...prev[boardId],
+        bestAngle: bestAngle.angle,
+        bestRSSI: bestAngle.rssi,
+      },
+    }));
+    addLog(
+      `[${boardId}] Updated best angle: ${bestAngle.angle.toFixed(
+        1
+      )}°, RSSI: ${bestAngle.rssi.toFixed(1)} dBm`,
+      'info'
     );
-    return bestPoint;
-  };
-
-  // Curve fitting (unchanged from previous)
-  const fitCurve = (boardId) => {
-    const data = chartData[boardId] || [];
-    // Require at least 5 unique angles for fitting
-    const uniqueAngles = [...new Set(data.map((point) => point.angle))];
-    if (uniqueAngles.length < 5) return [];
-
-    // Find min/max RSSI to scale the curve
-    const rssiValues = data.map((point) => point.rssi);
-    const minRssi = Math.min(...rssiValues);
-    const maxRssi = Math.max(...rssiValues);
-    const amplitude = (maxRssi - minRssi) / 2;
-    const offset = minRssi + amplitude;
-
-    // Generate fitted curve: A * cos(angle) + C
-    const angles = Array.from({ length: 19 }, (_, i) => i * 10); // 0° to 180° in 10° steps
-    return angles.map((angle) => {
-      const cosValue =
-        boardId === 'board1'
-          ? Math.cos((angle * Math.PI) / 180)
-          : Math.cos(((angle - 10) * Math.PI) / 180); // 10° offset for board2
-      const rssi = amplitude * cosValue + offset;
-      return { angle, rssi };
-    });
   };
 
   const mqttClientRef = useRef(null);
@@ -252,7 +233,6 @@ const App = () => {
 
   const onMessageArrived = (message) => {
     const topic = message.destinationName;
-    const payload = message.payloadString;
     const topicParts = topic.split('/');
     const boardId = topicParts[1];
 
@@ -261,10 +241,26 @@ const App = () => {
       return;
     }
 
+    let payload;
     try {
-      const data = JSON.parse(payload);
-      handleMQTTMessage(boardId, topic, data);
-    } catch (error) {
+      // Try to decode as UTF-8 string
+      payload = message.payloadString;
+    } catch {
+      // Fallback to raw bytes
+      payload = message.payloadBytes;
+    }
+
+    try {
+      // If payload is a string, try JSON parse
+      if (typeof payload === 'string') {
+        const data = JSON.parse(payload);
+        handleMQTTMessage(boardId, topic, data);
+      } else {
+        // Binary payload → handle as Uint8Array
+        handleMQTTMessage(boardId, topic, payload);
+      }
+    } catch {
+      // Not JSON, but still valid UTF-8 string
       handleMQTTMessage(boardId, topic, payload);
     }
   };
@@ -377,8 +373,6 @@ const App = () => {
         ...prev,
         [boardId]: {
           ...prev[boardId],
-          bestAngle: data.best_angle,
-          bestRSSI: data.best_rssi,
           tracking: false,
         },
       }));
@@ -560,8 +554,8 @@ const App = () => {
                 <LiveChart
                   boardId={boardId}
                   chartData={chartData[boardId]}
-                  fittedCurve={fitCurve(boardId)}
-                  bestAngle={getBestAngle(boardId)}
+                  showDetails={true} // Enable to show detailed parameters if needed
+                  onBestAngleUpdate={handleBestAngleUpdate}
                 />
               </div>
               <LiveDataDisplay
