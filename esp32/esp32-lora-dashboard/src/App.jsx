@@ -208,24 +208,36 @@ const ESP32LoRaDashboard = () => {
   };
 
   const handleMQTTMessage = (boardId, topic, data) => {
+    console.log(`[${boardId}] Received from ${topic}:`, data);
+
     if (topic.includes('/status')) {
       handleStatusMessage(boardId, data);
-    } else if (topic.includes('/lora/data')) {
+    } else if (topic.includes('/lora/data') || topic.includes('/data')) {
       handleLoRaData(boardId, data);
     } else if (topic.includes('/angle')) {
+      const angleValue = typeof data === 'object' ? data.angle : parseInt(data);
       setSystemData((prev) => ({
         ...prev,
-        [boardId]: { ...prev[boardId], angle: parseInt(data) },
+        [boardId]: { ...prev[boardId], angle: angleValue },
       }));
+      console.log(`[${boardId}] Angle updated to: ${angleValue}°`);
     } else if (topic.includes('/rotation/complete')) {
       handleRotationComplete(boardId, data);
     } else if (topic.includes('/stored/data')) {
       handleStoredData(boardId, data);
     } else {
-      addLog(
-        `[${boardId}] Received from ${topic}: ${JSON.stringify(data)}`,
-        'info'
-      );
+      // Handle any other topics that might contain RSSI data
+      if (
+        typeof data === 'object' &&
+        (data.rssi !== undefined || data.RSSI !== undefined)
+      ) {
+        handleLoRaData(boardId, data);
+      } else {
+        addLog(
+          `[${boardId}] Received from ${topic}: ${JSON.stringify(data)}`,
+          'info'
+        );
+      }
     }
   };
 
@@ -250,43 +262,54 @@ const ESP32LoRaDashboard = () => {
 
   const handleLoRaData = (boardId, data) => {
     if (typeof data === 'object') {
+      // Increment packet counter
       setTotalPackets((prev) => ({ ...prev, [boardId]: prev[boardId] + 1 }));
 
+      // Update live data display
       setLiveData((prev) => ({
         ...prev,
         [boardId]: {
-          lastRSSI: data.rssi,
-          lastSNR: data.snr,
-          lastMessage: data.message || '-',
+          lastRSSI: data.rssi || data.RSSI || null,
+          lastSNR: data.snr || data.SNR || null,
+          lastMessage: data.message || data.msg || '-',
         },
       }));
 
-      // Update chart data - this is the critical part
-      if (data.angle !== undefined && data.rssi !== undefined) {
-        updateChart(boardId, data.angle, data.rssi);
+      // Update chart data - handle multiple possible field names
+      const angle = data.angle || data.current_angle || data.servo_angle;
+      const rssi = data.rssi || data.RSSI || data.signal_strength;
+
+      if (angle !== undefined && rssi !== undefined) {
+        console.log(
+          `[${boardId}] Updating chart: Angle ${angle}°, RSSI ${rssi} dBm`
+        );
+        updateChart(boardId, angle, rssi);
       }
 
       // Update best values
-      if (
-        data.best_rssi_at_angle &&
-        data.best_rssi_at_angle > systemData[boardId].bestRSSI
-      ) {
+      const bestRSSI =
+        data.best_rssi_at_angle || data.best_rssi || data.bestRSSI;
+      if (bestRSSI && bestRSSI > systemData[boardId].bestRSSI) {
         setSystemData((prev) => ({
           ...prev,
           [boardId]: {
             ...prev[boardId],
-            bestRSSI: data.best_rssi_at_angle,
-            bestAngle: data.angle,
+            bestRSSI: bestRSSI,
+            bestAngle: angle || prev[boardId].bestAngle,
           },
         }));
       }
 
+      // Enhanced logging
       addLog(
-        `[${boardId}] Angle ${data.angle}° | RSSI: ${
-          data.rssi
-        } dBm | SNR: ${data.snr?.toFixed(1)} dB`,
+        `[${boardId}] ${angle ? `Angle ${angle}°` : ''} | RSSI: ${
+          rssi || 'N/A'
+        } dBm | SNR: ${data.snr ? data.snr.toFixed(1) : 'N/A'} dB`,
         'data'
       );
+    } else {
+      // Handle plain text messages
+      addLog(`[${boardId}] Raw data: ${data}`, 'data');
     }
   };
 
@@ -318,6 +341,8 @@ const ESP32LoRaDashboard = () => {
   };
 
   const updateChart = (boardId, angle, rssi) => {
+    console.log(`Updating chart for ${boardId}: angle=${angle}, rssi=${rssi}`);
+
     setChartData((prevData) => {
       const prevBoardData = prevData[boardId] || [];
       const existingIndex = prevBoardData.findIndex(
@@ -326,21 +351,23 @@ const ESP32LoRaDashboard = () => {
       let newBoardData;
 
       if (existingIndex !== -1) {
-        // Update if this is a better RSSI for the same angle
-        if (rssi > prevBoardData[existingIndex].rssi) {
-          newBoardData = [...prevBoardData];
-          newBoardData[existingIndex] = { angle, rssi };
-        } else {
-          return prevData; // No change needed
-        }
+        // Always update the RSSI for the same angle (show latest reading)
+        newBoardData = [...prevBoardData];
+        newBoardData[existingIndex] = { angle, rssi };
+        console.log(`Updated existing point at angle ${angle}: ${rssi} dBm`);
       } else {
         // Add new data point
         newBoardData = [...prevBoardData, { angle, rssi }];
+        console.log(`Added new point at angle ${angle}: ${rssi} dBm`);
       }
+
+      // Sort by angle and return updated data
+      const sortedData = newBoardData.sort((a, b) => a.angle - b.angle);
+      console.log(`${boardId} chart now has ${sortedData.length} points`);
 
       return {
         ...prevData,
-        [boardId]: newBoardData.sort((a, b) => a.angle - b.angle),
+        [boardId]: sortedData,
       };
     });
   };
@@ -443,11 +470,11 @@ const ESP32LoRaDashboard = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600 p-5">
-      <div className="max-w-7xl mx-auto bg-white/95 rounded-3xl shadow-2xl backdrop-blur-lg overflow-hidden">
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-violet-800 p-5">
+      <div className="max-w-7xl mx-auto bg-gray-800/95 rounded-3xl shadow-2xl backdrop-blur-lg overflow-hidden border border-purple-500/30">
         {/* Header */}
-        <div className="bg-gradient-to-r from-blue-500 to-cyan-500 text-white p-8 text-center relative overflow-hidden">
-          <div className="absolute inset-0 opacity-30">
+        <div className="bg-gradient-to-r from-purple-600 to-violet-600 text-white p-8 text-center relative overflow-hidden">
+          <div className="absolute inset-0 opacity-20">
             <svg className="w-full h-full" viewBox="0 0 100 100">
               <defs>
                 <pattern
@@ -459,7 +486,7 @@ const ESP32LoRaDashboard = () => {
                   <path
                     d="M 10 0 L 0 0 0 10"
                     fill="none"
-                    stroke="rgba(255,255,255,0.1)"
+                    stroke="rgba(255,255,255,0.2)"
                     strokeWidth="1"
                   />
                 </pattern>
@@ -468,7 +495,7 @@ const ESP32LoRaDashboard = () => {
             </svg>
           </div>
 
-          <h1 className="text-4xl font-bold mb-4 relative z-10">
+          <h1 className="text-4xl font-bold mb-4 relative z-10 text-white">
             ESP32 LoRa Tracker Dashboard
           </h1>
 
@@ -476,10 +503,10 @@ const ESP32LoRaDashboard = () => {
             <span
               className={`px-4 py-2 rounded-full text-sm font-bold ${
                 connecting
-                  ? 'bg-yellow-500'
+                  ? 'bg-yellow-500 text-black'
                   : isConnected
-                  ? 'bg-green-500'
-                  : 'bg-red-500'
+                  ? 'bg-green-500 text-white'
+                  : 'bg-red-500 text-white'
               }`}
             >
               {connecting
@@ -494,10 +521,10 @@ const ESP32LoRaDashboard = () => {
             <span
               className={`px-4 py-2 rounded-full text-sm font-bold ${
                 connecting
-                  ? 'bg-yellow-500'
+                  ? 'bg-yellow-500 text-black'
                   : isConnected
-                  ? 'bg-green-500'
-                  : 'bg-red-500'
+                  ? 'bg-green-500 text-white'
+                  : 'bg-red-500 text-white'
               }`}
             >
               MQTT:{' '}
@@ -513,8 +540,8 @@ const ESP32LoRaDashboard = () => {
                 <span
                   className={`px-4 py-2 rounded-full text-sm font-bold ${
                     systemData[boardId].tracking
-                      ? 'bg-orange-500'
-                      : 'bg-gray-500'
+                      ? 'bg-orange-500 text-white'
+                      : 'bg-gray-600 text-gray-200'
                   }`}
                 >
                   {boardId}:{' '}
@@ -523,8 +550,8 @@ const ESP32LoRaDashboard = () => {
                 <span
                   className={`px-4 py-2 rounded-full text-sm font-bold ${
                     systemData[boardId].loraActive
-                      ? 'bg-green-500'
-                      : 'bg-red-500'
+                      ? 'bg-green-500 text-white'
+                      : 'bg-red-500 text-white'
                   }`}
                 >
                   LoRa: {systemData[boardId].loraActive ? 'Active' : 'Inactive'}
@@ -542,14 +569,14 @@ const ESP32LoRaDashboard = () => {
               <button
                 onClick={connectMQTT}
                 disabled={!mqttReady || connecting}
-                className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-8 py-4 rounded-xl font-semibold hover:from-blue-600 hover:to-blue-700 transform hover:-translate-y-1 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg"
+                className="bg-gradient-to-r from-purple-600 to-violet-600 text-white px-8 py-4 rounded-xl font-semibold hover:from-purple-700 hover:to-violet-700 transform hover:-translate-y-1 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg border border-purple-500/50"
               >
                 {connecting ? 'Connecting...' : 'Connect to MQTT'}
               </button>
             ) : (
               <button
                 onClick={disconnectMQTT}
-                className="bg-gradient-to-r from-red-500 to-red-600 text-white px-8 py-4 rounded-xl font-semibold hover:from-red-600 hover:to-red-700 transform hover:-translate-y-1 transition-all duration-300 shadow-lg"
+                className="bg-gradient-to-r from-red-600 to-pink-600 text-white px-8 py-4 rounded-xl font-semibold hover:from-red-700 hover:to-pink-700 transform hover:-translate-y-1 transition-all duration-300 shadow-lg border border-red-500/50"
               >
                 Disconnect MQTT
               </button>
@@ -565,16 +592,16 @@ const ESP32LoRaDashboard = () => {
             return (
               <div
                 key={boardId}
-                className="mb-12 bg-white rounded-2xl p-6 shadow-lg border border-gray-100"
+                className="mb-12 bg-gray-800/80 rounded-2xl p-6 shadow-lg border border-purple-500/30 backdrop-blur-sm"
               >
-                <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center border-b-2 border-blue-500 pb-3">
+                <h2 className="text-2xl font-bold text-purple-300 mb-6 text-center border-b-2 border-purple-500 pb-3">
                   Board: {boardId.toUpperCase()}
                 </h2>
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                   {/* Control Panel */}
                   <div className="space-y-6">
-                    <h3 className="text-xl font-bold text-gray-800">
+                    <h3 className="text-xl font-bold text-purple-300">
                       Control Panel
                     </h3>
 
@@ -582,65 +609,65 @@ const ESP32LoRaDashboard = () => {
                       <button
                         onClick={() => startTracking(boardId)}
                         disabled={!isConnected || systemData[boardId].tracking}
-                        className="bg-gradient-to-r from-green-500 to-green-600 text-white px-6 py-3 rounded-xl font-semibold hover:from-green-600 hover:to-green-700 transform hover:-translate-y-1 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg"
+                        className="bg-gradient-to-r from-green-600 to-emerald-600 text-white px-6 py-3 rounded-xl font-semibold hover:from-green-700 hover:to-emerald-700 transform hover:-translate-y-1 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg border border-green-500/50"
                       >
                         Start Tracking
                       </button>
                       <button
                         onClick={() => stopTracking(boardId)}
                         disabled={!isConnected || !systemData[boardId].tracking}
-                        className="bg-gradient-to-r from-red-500 to-red-600 text-white px-6 py-3 rounded-xl font-semibold hover:from-red-600 hover:to-red-700 transform hover:-translate-y-1 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg"
+                        className="bg-gradient-to-r from-red-600 to-pink-600 text-white px-6 py-3 rounded-xl font-semibold hover:from-red-700 hover:to-pink-700 transform hover:-translate-y-1 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg border border-red-500/50"
                       >
                         Stop Tracking
                       </button>
                       <button
                         onClick={() => resetSystem(boardId)}
                         disabled={!isConnected}
-                        className="bg-gradient-to-r from-orange-500 to-orange-600 text-white px-6 py-3 rounded-xl font-semibold hover:from-orange-600 hover:to-orange-700 transform hover:-translate-y-1 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg"
+                        className="bg-gradient-to-r from-orange-600 to-amber-600 text-white px-6 py-3 rounded-xl font-semibold hover:from-orange-700 hover:to-amber-700 transform hover:-translate-y-1 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg border border-orange-500/50"
                       >
                         Reset System
                       </button>
                       <button
                         onClick={() => toggleLED(boardId)}
                         disabled={!isConnected}
-                        className="bg-gradient-to-r from-gray-500 to-gray-600 text-white px-6 py-3 rounded-xl font-semibold hover:from-gray-600 hover:to-gray-700 transform hover:-translate-y-1 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg"
+                        className="bg-gradient-to-r from-gray-600 to-slate-600 text-white px-6 py-3 rounded-xl font-semibold hover:from-gray-700 hover:to-slate-700 transform hover:-translate-y-1 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg border border-gray-500/50"
                       >
                         Toggle LED
                       </button>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
-                      <div className="bg-gray-50 p-4 rounded-xl border-l-4 border-blue-500">
-                        <div className="text-xs text-gray-600 uppercase tracking-wide mb-1">
+                      <div className="bg-gray-700/50 p-4 rounded-xl border-l-4 border-purple-500 backdrop-blur-sm">
+                        <div className="text-xs text-purple-300 uppercase tracking-wide mb-1">
                           Current Angle
                         </div>
-                        <div className="text-xl font-bold text-gray-800">
+                        <div className="text-xl font-bold text-white">
                           {systemData[boardId].angle}°
                         </div>
                       </div>
-                      <div className="bg-gray-50 p-4 rounded-xl border-l-4 border-blue-500">
-                        <div className="text-xs text-gray-600 uppercase tracking-wide mb-1">
+                      <div className="bg-gray-700/50 p-4 rounded-xl border-l-4 border-purple-500 backdrop-blur-sm">
+                        <div className="text-xs text-purple-300 uppercase tracking-wide mb-1">
                           Progress
                         </div>
-                        <div className="text-xl font-bold text-gray-800">
+                        <div className="text-xl font-bold text-white">
                           {progress}%
                         </div>
                       </div>
-                      <div className="bg-gray-50 p-4 rounded-xl border-l-4 border-blue-500">
-                        <div className="text-xs text-gray-600 uppercase tracking-wide mb-1">
+                      <div className="bg-gray-700/50 p-4 rounded-xl border-l-4 border-purple-500 backdrop-blur-sm">
+                        <div className="text-xs text-purple-300 uppercase tracking-wide mb-1">
                           Best Angle
                         </div>
-                        <div className="text-xl font-bold text-gray-800">
+                        <div className="text-xl font-bold text-white">
                           {systemData[boardId].bestAngle >= 0
                             ? `${systemData[boardId].bestAngle}°`
                             : '-'}
                         </div>
                       </div>
-                      <div className="bg-gray-50 p-4 rounded-xl border-l-4 border-blue-500">
-                        <div className="text-xs text-gray-600 uppercase tracking-wide mb-1">
+                      <div className="bg-gray-700/50 p-4 rounded-xl border-l-4 border-purple-500 backdrop-blur-sm">
+                        <div className="text-xs text-purple-300 uppercase tracking-wide mb-1">
                           Best RSSI
                         </div>
-                        <div className="text-xl font-bold text-gray-800">
+                        <div className="text-xl font-bold text-white">
                           {systemData[boardId].bestRSSI > -999
                             ? `${systemData[boardId].bestRSSI} dBm`
                             : '- dBm'}
@@ -648,9 +675,9 @@ const ESP32LoRaDashboard = () => {
                       </div>
                     </div>
 
-                    <div className="w-full h-5 bg-gray-200 rounded-full overflow-hidden">
+                    <div className="w-full h-5 bg-gray-700 rounded-full overflow-hidden border border-purple-500/30">
                       <div
-                        className="h-full bg-gradient-to-r from-green-500 to-green-600 transition-all duration-300 ease-in-out"
+                        className="h-full bg-gradient-to-r from-purple-500 to-violet-500 transition-all duration-300 ease-in-out"
                         style={{ width: `${progress}%` }}
                       ></div>
                     </div>
@@ -658,15 +685,16 @@ const ESP32LoRaDashboard = () => {
 
                   {/* Live Chart */}
                   <div className="space-y-4">
-                    <h3 className="text-xl font-bold text-gray-800">
+                    <h3 className="text-xl font-bold text-purple-300">
                       Live RSSI Chart
                     </h3>
-                    <div className="h-80">
+                    <div className="h-80 bg-gray-900/50 rounded-xl p-4 border border-purple-500/30">
                       <ResponsiveContainer width="100%" height="100%">
                         <LineChart data={chartData[boardId]}>
                           <CartesianGrid
                             strokeDasharray="3 3"
-                            stroke="#e0e0e0"
+                            stroke="#6b46c1"
+                            opacity={0.3}
                           />
                           <XAxis
                             dataKey="angle"
@@ -674,46 +702,54 @@ const ESP32LoRaDashboard = () => {
                               value: 'Angle (degrees)',
                               position: 'insideBottom',
                               offset: -10,
+                              style: { fill: '#c4b5fd' },
                             }}
-                            stroke="#666"
+                            stroke="#c4b5fd"
+                            tick={{ fill: '#c4b5fd' }}
                           />
                           <YAxis
                             label={{
                               value: 'RSSI (dBm)',
                               angle: -90,
                               position: 'insideLeft',
+                              style: { fill: '#c4b5fd' },
                             }}
-                            stroke="#666"
+                            stroke="#c4b5fd"
+                            tick={{ fill: '#c4b5fd' }}
                           />
                           <Tooltip
                             contentStyle={{
-                              backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                              color: 'white',
-                              border: '1px solid #2196F3',
+                              backgroundColor: 'rgba(17, 24, 39, 0.95)',
+                              color: '#e5e7eb',
+                              border: '1px solid #8b5cf6',
                               borderRadius: '8px',
+                              boxShadow: '0 10px 25px rgba(139, 92, 246, 0.3)',
                             }}
                             formatter={(value) => [`${value} dBm`, 'RSSI']}
                             labelFormatter={(label) => `Angle: ${label}°`}
+                            labelStyle={{ color: '#c4b5fd' }}
                           />
-                          <Legend />
+                          <Legend wrapperStyle={{ color: '#c4b5fd' }} />
                           <Line
                             type="monotone"
                             dataKey="rssi"
                             stroke={
-                              boardId === 'board1' ? '#2196F3' : '#f44336'
+                              boardId === 'board1' ? '#8b5cf6' : '#ec4899'
                             }
                             strokeWidth={3}
                             dot={{
                               fill:
-                                boardId === 'board1' ? '#2196F3' : '#f44336',
+                                boardId === 'board1' ? '#8b5cf6' : '#ec4899',
                               strokeWidth: 2,
                               r: 4,
                             }}
                             activeDot={{
                               r: 6,
                               stroke:
-                                boardId === 'board1' ? '#2196F3' : '#f44336',
+                                boardId === 'board1' ? '#8b5cf6' : '#ec4899',
                               strokeWidth: 2,
+                              fill:
+                                boardId === 'board1' ? '#a78bfa' : '#f472b6',
                             }}
                             name="RSSI (dBm)"
                           />
@@ -725,43 +761,43 @@ const ESP32LoRaDashboard = () => {
 
                 {/* Live Data */}
                 <div className="mt-8">
-                  <h3 className="text-xl font-bold text-gray-800 mb-4">
+                  <h3 className="text-xl font-bold text-purple-300 mb-4">
                     Live LoRa Data
                   </h3>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="bg-gray-50 p-4 rounded-xl border-l-4 border-blue-500">
-                      <div className="text-xs text-gray-600 uppercase tracking-wide mb-1">
+                    <div className="bg-gray-700/50 p-4 rounded-xl border-l-4 border-purple-500 backdrop-blur-sm">
+                      <div className="text-xs text-purple-300 uppercase tracking-wide mb-1">
                         Last RSSI
                       </div>
-                      <div className="text-xl font-bold text-gray-800">
+                      <div className="text-xl font-bold text-white">
                         {liveData[boardId].lastRSSI !== null
                           ? `${liveData[boardId].lastRSSI} dBm`
                           : '- dBm'}
                       </div>
                     </div>
-                    <div className="bg-gray-50 p-4 rounded-xl border-l-4 border-blue-500">
-                      <div className="text-xs text-gray-600 uppercase tracking-wide mb-1">
+                    <div className="bg-gray-700/50 p-4 rounded-xl border-l-4 border-purple-500 backdrop-blur-sm">
+                      <div className="text-xs text-purple-300 uppercase tracking-wide mb-1">
                         Last SNR
                       </div>
-                      <div className="text-xl font-bold text-gray-800">
+                      <div className="text-xl font-bold text-white">
                         {liveData[boardId].lastSNR !== null
                           ? `${liveData[boardId].lastSNR.toFixed(1)} dB`
                           : '- dB'}
                       </div>
                     </div>
-                    <div className="bg-gray-50 p-4 rounded-xl border-l-4 border-blue-500">
-                      <div className="text-xs text-gray-600 uppercase tracking-wide mb-1">
+                    <div className="bg-gray-700/50 p-4 rounded-xl border-l-4 border-purple-500 backdrop-blur-sm">
+                      <div className="text-xs text-purple-300 uppercase tracking-wide mb-1">
                         Packets Received
                       </div>
-                      <div className="text-xl font-bold text-gray-800">
+                      <div className="text-xl font-bold text-white">
                         {totalPackets[boardId]}
                       </div>
                     </div>
-                    <div className="bg-gray-50 p-4 rounded-xl border-l-4 border-blue-500">
-                      <div className="text-xs text-gray-600 uppercase tracking-wide mb-1">
+                    <div className="bg-gray-700/50 p-4 rounded-xl border-l-4 border-purple-500 backdrop-blur-sm">
+                      <div className="text-xs text-purple-300 uppercase tracking-wide mb-1">
                         Last Message
                       </div>
-                      <div className="text-lg font-bold text-gray-800 truncate">
+                      <div className="text-lg font-bold text-white truncate">
                         {liveData[boardId].lastMessage}
                       </div>
                     </div>
@@ -772,30 +808,34 @@ const ESP32LoRaDashboard = () => {
           })}
 
           {/* System Logs */}
-          <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-100">
-            <h3 className="text-xl font-bold text-gray-800 mb-6 pb-3 border-b-2 border-blue-500">
+          <div className="bg-gray-800/80 rounded-2xl p-6 shadow-lg border border-purple-500/30 backdrop-blur-sm">
+            <h3 className="text-xl font-bold text-purple-300 mb-6 pb-3 border-b-2 border-purple-500">
               System Logs
             </h3>
-            <div className="bg-black rounded-xl p-5 h-72 overflow-y-auto font-mono text-sm">
+            <div className="bg-black/80 rounded-xl p-5 h-72 overflow-y-auto font-mono text-sm border border-purple-500/30">
               {logs.map((log) => (
                 <div
                   key={log.id}
-                  className={`mb-1 p-1 rounded ${
+                  className={`mb-1 p-2 rounded ${
                     log.type === 'error'
-                      ? 'text-red-400 bg-red-400/10'
+                      ? 'text-red-400 bg-red-900/20 border-l-2 border-red-500'
                       : log.type === 'warning'
-                      ? 'text-yellow-400 bg-yellow-400/10'
+                      ? 'text-yellow-400 bg-yellow-900/20 border-l-2 border-yellow-500'
                       : log.type === 'data'
-                      ? 'text-cyan-400'
-                      : 'text-green-400'
+                      ? 'text-cyan-400 bg-cyan-900/20 border-l-2 border-cyan-500'
+                      : 'text-green-400 bg-green-900/20 border-l-2 border-green-500'
                   }`}
                 >
-                  [{log.timestamp}] {log.message}
+                  <span className="text-purple-300">[{log.timestamp}]</span>{' '}
+                  {log.message}
                 </div>
               ))}
               {logs.length === 0 && (
                 <div className="text-gray-500 text-center py-8">
-                  Waiting for system logs...
+                  <div className="animate-pulse">
+                    <div className="text-purple-400">⚡</div>
+                    <div className="mt-2">Waiting for system logs...</div>
+                  </div>
                 </div>
               )}
             </div>
