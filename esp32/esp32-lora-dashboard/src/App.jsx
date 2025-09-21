@@ -5,11 +5,9 @@ import BoardControl from './components/BoardControl.jsx';
 import LiveChart from './components/LiveChart.jsx';
 import LiveDataDisplay from './components/LiveDataDisplay.jsx';
 import SystemLogs from './components/SystemLogs.jsx';
-import SettingsPanel from './components/SettingsPanel.jsx'; // NEW import
+import SettingsPanel from './components/SettingsPanel.jsx';
 
-// Dynamic MQTT Configuration - now in state
 const App = () => {
-  // Broker config state (dynamic)
   const [brokerHost, setBrokerHost] = useState(() => {
     return localStorage.getItem('mqttHost') || '10.214.162.1';
   });
@@ -20,7 +18,6 @@ const App = () => {
   const CLIENT_ID = 'dashboard_' + Math.random().toString(16).substr(2, 8);
   const BOARDS = ['board1', 'board2'];
 
-  // State management (unchanged)
   const [isConnected, setIsConnected] = useState(false);
   const [mqttReady, setMqttReady] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -58,15 +55,50 @@ const App = () => {
     },
   });
 
+  // NEW: Calculate best angle from fitted curve
+  const getBestAngle = (boardId) => {
+    const fittedCurve = fitCurve(boardId);
+    if (fittedCurve.length === 0) return { angle: -1, rssi: -999 };
+    const bestPoint = fittedCurve.reduce(
+      (max, point) => (point.rssi > max.rssi ? point : max),
+      { angle: -1, rssi: -999 }
+    );
+    return bestPoint;
+  };
+
+  // Curve fitting (unchanged from previous)
+  const fitCurve = (boardId) => {
+    const data = chartData[boardId] || [];
+    // Require at least 5 unique angles for fitting
+    const uniqueAngles = [...new Set(data.map((point) => point.angle))];
+    if (uniqueAngles.length < 5) return [];
+
+    // Find min/max RSSI to scale the curve
+    const rssiValues = data.map((point) => point.rssi);
+    const minRssi = Math.min(...rssiValues);
+    const maxRssi = Math.max(...rssiValues);
+    const amplitude = (maxRssi - minRssi) / 2;
+    const offset = minRssi + amplitude;
+
+    // Generate fitted curve: A * cos(angle) + C
+    const angles = Array.from({ length: 19 }, (_, i) => i * 10); // 0° to 180° in 10° steps
+    return angles.map((angle) => {
+      const cosValue =
+        boardId === 'board1'
+          ? Math.cos((angle * Math.PI) / 180)
+          : Math.cos(((angle - 10) * Math.PI) / 180); // 10° offset for board2
+      const rssi = amplitude * cosValue + offset;
+      return { angle, rssi };
+    });
+  };
+
   const mqttClientRef = useRef(null);
 
-  // Persist broker config to localStorage
   useEffect(() => {
     localStorage.setItem('mqttHost', brokerHost);
     localStorage.setItem('mqttPort', brokerPort);
   }, [brokerHost, brokerPort]);
 
-  // Load MQTT library (unchanged)
   useEffect(() => {
     const script = document.createElement('script');
     script.src =
@@ -110,8 +142,8 @@ const App = () => {
 
       setConnecting(true);
       mqttClientRef.current = new window.Paho.MQTT.Client(
-        brokerHost, // Dynamic host
-        brokerPort, // Dynamic port
+        brokerHost,
+        Number(brokerPort),
         CLIENT_ID
       );
 
@@ -135,7 +167,6 @@ const App = () => {
     }
   };
 
-  // Updated config function for SettingsPanel
   const updateBrokerConfig = (newHost, newPort) => {
     if (isConnected) {
       if (
@@ -145,10 +176,9 @@ const App = () => {
       ) {
         return false;
       }
-      disconnectMQTT(); // Force disconnect before updating
+      disconnectMQTT();
     }
 
-    // Basic validation
     if (!newHost || newHost.trim() === '') {
       addLog('Broker host cannot be empty', 'error');
       return false;
@@ -486,16 +516,15 @@ const App = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-violet-800 p-5">
-      <div className="max-w-7xl mx-auto bg-gray-800/95 rounded-3xl shadow-2xl backdrop-blur-lg overflow-hidden border border-purple-500/30">
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-violet-800 p-4">
+      <div className="max-w-6xl mx-auto bg-gray-800/95 rounded-2xl shadow-xl backdrop-blur-lg overflow-hidden border border-purple-500/30">
         <Header
           isConnected={isConnected}
           connecting={connecting}
           systemData={systemData}
           boards={BOARDS}
         />
-        <div className="p-8">
-          {/* NEW: Settings Panel for Broker Config */}
+        <div className="p-6">
           <SettingsPanel
             brokerHost={brokerHost}
             brokerPort={brokerPort}
@@ -503,7 +532,6 @@ const App = () => {
             updateBrokerConfig={updateBrokerConfig}
             addLog={addLog}
           />
-
           <ConnectionControl
             isConnected={isConnected}
             mqttReady={mqttReady}
@@ -514,12 +542,12 @@ const App = () => {
           {BOARDS.map((boardId) => (
             <div
               key={boardId}
-              className="mb-12 bg-gray-800/80 rounded-2xl p-6 shadow-lg border border-purple-500/30 backdrop-blur-sm"
+              className="mb-8 bg-gray-800/80 rounded-xl p-4 shadow-lg border border-purple-500/30 backdrop-blur-sm"
             >
-              <h2 className="text-2xl font-bold text-purple-300 mb-6 text-center border-b-2 border-purple-500 pb-3">
+              <h2 className="text-xl font-bold text-purple-300 mb-4 text-center border-b border-purple-500/50 pb-2">
                 Board: {boardId.toUpperCase()}
               </h2>
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <BoardControl
                   boardId={boardId}
                   isConnected={isConnected}
@@ -529,7 +557,12 @@ const App = () => {
                   resetSystem={resetSystem}
                   toggleLED={toggleLED}
                 />
-                <LiveChart boardId={boardId} chartData={chartData} />
+                <LiveChart
+                  boardId={boardId}
+                  chartData={chartData[boardId]}
+                  fittedCurve={fitCurve(boardId)}
+                  bestAngle={getBestAngle(boardId)}
+                />
               </div>
               <LiveDataDisplay
                 boardId={boardId}
