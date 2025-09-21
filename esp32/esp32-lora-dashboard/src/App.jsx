@@ -29,6 +29,10 @@ const App = () => {
     board1: [],
     board2: [],
   });
+  const [finalData, setFinalData] = useState({
+    board1: null,
+    board2: null,
+  });
   const [totalPackets, setTotalPackets] = useState({
     board1: 0,
     board2: 0,
@@ -42,33 +46,37 @@ const App = () => {
     board1: {
       tracking: false,
       angle: 0,
-      bestAngle: -1,
-      bestRSSI: -999,
+      sourceMaxAngle: -1, // Raw measurement best angle
+      sourceMaxRSSI: -999, // Raw measurement best RSSI
+      peakAngle: -1, // Curve fitted peak angle
+      peakRSSI: -999, // Curve fitted peak RSSI
       loraActive: false,
     },
     board2: {
       tracking: false,
       angle: 0,
-      bestAngle: -1,
-      bestRSSI: -999,
+      sourceMaxAngle: -1,
+      sourceMaxRSSI: -999,
+      peakAngle: -1,
+      peakRSSI: -999,
       loraActive: false,
     },
   });
 
-  // Handle best angle updates from LiveChart
-  const handleBestAngleUpdate = (boardId, bestAngle) => {
+  // Handle curve fitted peak angle updates from LiveChart
+  const handlePeakAngleUpdate = (boardId, peakData) => {
     setSystemData((prev) => ({
       ...prev,
       [boardId]: {
         ...prev[boardId],
-        bestAngle: bestAngle.angle,
-        bestRSSI: bestAngle.rssi,
+        peakAngle: peakData.angle,
+        peakRSSI: peakData.rssi,
       },
     }));
     addLog(
-      `[${boardId}] Updated best angle: ${bestAngle.angle.toFixed(
+      `[${boardId}] Curve fitted peak: ${peakData.angle.toFixed(
         1
-      )}°, RSSI: ${bestAngle.rssi.toFixed(1)} dBm`,
+      )}°, Power: ${peakData.rssi.toFixed(1)} dBm`,
       'info'
     );
   };
@@ -201,6 +209,7 @@ const App = () => {
       topics.push(`esp32/${boardId}/angle`);
       topics.push(`esp32/${boardId}/rotation/complete`);
       topics.push(`esp32/${boardId}/stored/data`);
+      topics.push(`esp32/${boardId}/all/angles`); // New topic for final angle data
     });
 
     topics.forEach((topic) => {
@@ -283,6 +292,8 @@ const App = () => {
       handleRotationComplete(boardId, data);
     } else if (topic.includes('/stored/data')) {
       handleStoredData(boardId, data);
+    } else if (topic.includes('/all/angles')) {
+      handleFinalAngleData(boardId, data);
     } else {
       if (
         typeof data === 'object' &&
@@ -307,10 +318,10 @@ const App = () => {
           tracking: data.tracking || false,
           angle: data.angle || 0,
           loraActive: data.lora_active || false,
-          bestRSSI:
+          sourceMaxRSSI:
             data.current_best_rssi && data.current_best_rssi > -999
               ? data.current_best_rssi
-              : prev[boardId].bestRSSI,
+              : prev[boardId].sourceMaxRSSI,
         },
       }));
       addLog(`[${boardId}] Status: ${data.message || 'Status update'}`, 'info');
@@ -341,13 +352,13 @@ const App = () => {
 
       const bestRSSI =
         data.best_rssi_at_angle || data.best_rssi || data.bestRSSI;
-      if (bestRSSI && bestRSSI > systemData[boardId].bestRSSI) {
+      if (bestRSSI && bestRSSI > systemData[boardId].sourceMaxRSSI) {
         setSystemData((prev) => ({
           ...prev,
           [boardId]: {
             ...prev[boardId],
-            bestRSSI: bestRSSI,
-            bestAngle: angle || prev[boardId].bestAngle,
+            sourceMaxRSSI: bestRSSI,
+            sourceMaxAngle: angle || prev[boardId].sourceMaxAngle,
           },
         }));
       }
@@ -385,6 +396,71 @@ const App = () => {
         `[${boardId}] Best angle data: Angle ${data.angle}°, RSSI ${data.rssi} dBm`,
         'info'
       );
+    }
+  };
+
+  // NEW: Handle final angle data with all detected angles and their RSSI values
+  const handleFinalAngleData = (boardId, data) => {
+    if (typeof data === 'object' && data.angles && data.rssi) {
+      console.log(`[${boardId}] Received final angle data:`, data);
+
+      // Store the final data
+      setFinalData((prev) => ({
+        ...prev,
+        [boardId]: data,
+      }));
+
+      // Create chart data from the final angle data
+      const finalChartData = [];
+      for (let i = 0; i < data.angles.length; i++) {
+        finalChartData.push({
+          angle: data.angles[i],
+          rssi: data.rssi[i],
+        });
+      }
+
+      // Update chart with final data
+      setChartData((prev) => ({
+        ...prev,
+        [boardId]: finalChartData.sort((a, b) => a.angle - b.angle),
+      }));
+
+      // Find best angle from final data
+      let bestAngle = -1;
+      let bestRSSI = -999;
+      for (let i = 0; i < data.rssi.length; i++) {
+        if (data.rssi[i] > bestRSSI) {
+          bestRSSI = data.rssi[i];
+          bestAngle = data.angles[i];
+        }
+      }
+
+      // Update system data with final source max angle (raw measurements)
+      if (bestAngle >= 0) {
+        setSystemData((prev) => ({
+          ...prev,
+          [boardId]: {
+            ...prev[boardId],
+            sourceMaxAngle: bestAngle,
+            sourceMaxRSSI: bestRSSI,
+          },
+        }));
+      }
+
+      addLog(
+        `[${boardId}] Final angle data received: ${data.angles.length} angles with signals`,
+        'success'
+      );
+      addLog(
+        `[${boardId}] Final scan complete - Best: ${bestRSSI} dBm at ${bestAngle}°`,
+        'success'
+      );
+
+      // Log all detected angles
+      const angleList = data.angles
+        .map((angle, i) => `${angle}°:${data.rssi[i]}dBm`)
+        .join(', ');
+      addLog(`[${boardId}] Detected angles: ${angleList}`, 'info');
     }
   };
 
@@ -482,13 +558,16 @@ const App = () => {
     publishMessage(boardId, 'reset', '1');
     addLog(`[${boardId}] Resetting system...`, 'info');
     setChartData((prev) => ({ ...prev, [boardId]: [] }));
+    setFinalData((prev) => ({ ...prev, [boardId]: null })); // Clear final data
     setTotalPackets((prev) => ({ ...prev, [boardId]: 0 }));
     setSystemData((prev) => ({
       ...prev,
       [boardId]: {
         ...prev[boardId],
-        bestAngle: -1,
-        bestRSSI: -999,
+        sourceMaxAngle: -1,
+        sourceMaxRSSI: -999,
+        peakAngle: -1,
+        peakRSSI: -999,
         angle: 0,
       },
     }));
@@ -541,6 +620,23 @@ const App = () => {
               <h2 className="text-xl font-bold text-purple-300 mb-4 text-center border-b border-purple-500/50 pb-2">
                 Board: {boardId.toUpperCase()}
               </h2>
+              {/* Display final data summary if available */}
+              {finalData[boardId] && (
+                <div className="mb-4 p-3 bg-green-900/30 border border-green-500/50 rounded-lg">
+                  <h3 className="text-green-400 font-semibold mb-2">
+                    Final Scan Results:
+                  </h3>
+                  <p className="text-green-200 text-sm">
+                    Detected signals at {finalData[boardId].angles.length}{' '}
+                    angles:{' '}
+                    {finalData[boardId].angles.map((angle, i) => (
+                      <span key={i} className="inline-block mr-2">
+                        {angle}°({finalData[boardId].rssi[i]}dBm)
+                      </span>
+                    ))}
+                  </p>
+                </div>
+              )}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <BoardControl
                   boardId={boardId}
@@ -554,8 +650,10 @@ const App = () => {
                 <LiveChart
                   boardId={boardId}
                   chartData={chartData[boardId]}
-                  showDetails={true} // Enable to show detailed parameters if needed
-                  onBestAngleUpdate={handleBestAngleUpdate}
+                  finalData={finalData[boardId]}
+                  isTracking={systemData[boardId].tracking}
+                  showDetails={true}
+                  onBestAngleUpdate={handlePeakAngleUpdate}
                 />
               </div>
               <LiveDataDisplay

@@ -17,7 +17,7 @@ const char* password = "GladToConnectYou";
 // -----------------
 const char* mqtt_server = "10.214.162.1";  // MQTT broker IP
 const int mqtt_port = 1883;                // TCP MQTT port
-const char* BOARD_ID = "board2";           // Change to "board2" for second board
+const char* BOARD_ID = "board1";           // Change to "board2" for second board
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -49,10 +49,12 @@ unsigned long lastSignalTime = 0;
 const int NO_SIGNAL_WAIT = 500;  // Wait 500ms at each angle if no packet received
 
 // -----------------
-// Data Storage for Safety
+// Data Storage for All Angles (0-180 = 181 points)
 // -----------------
-int bestRSSI[MAX_ANGLE + 1];  // Store best RSSI for each angle (0-180), -999 if no signal
+int bestRSSI[MAX_ANGLE + 1];     // Store best RSSI for each angle (0-180), -999 if no signal
 int packetCount[MAX_ANGLE + 1];  // Count packets received at each angle
+float bestSNR[MAX_ANGLE + 1];    // Store best SNR for each angle
+bool angleHasData[MAX_ANGLE + 1]; // Track which angles have valid data
 bool rotationComplete = false;
 
 // -----------------
@@ -67,6 +69,7 @@ const char* TOPIC_LORA_DATA = "esp32/%s/lora/data";
 const char* TOPIC_ANGLE = "esp32/%s/angle";
 const char* TOPIC_ROTATION_COMPLETE = "esp32/%s/rotation/complete";
 const char* TOPIC_STORED_DATA = "esp32/%s/stored/data";
+const char* TOPIC_ALL_ANGLES_DATA = "esp32/%s/all/angles";  // New topic for all 181 points
 
 // Helper to format topics with BOARD_ID
 char topicBuffer[128];
@@ -134,7 +137,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
 // -----------------
 void initializeLoRa() {
   LoRa.setPins(5, 14, 2);  // SS, reset, DIO0
-  if (!LoRa.begin(418E6)) {
+  if (!LoRa.begin(420.5E6)) {
     Serial.println("❌ LoRa init failed!");
     loraInitialized = false;
     digitalWrite(LORA_ACTIVE_LED, LOW);
@@ -164,8 +167,10 @@ void handleLoRaReception() {
     if (currentAngle >= 0 && currentAngle <= MAX_ANGLE) {
       if (rssi > bestRSSI[currentAngle] || bestRSSI[currentAngle] == -999) {
         bestRSSI[currentAngle] = rssi;
+        bestSNR[currentAngle] = snr;  // Store SNR with best RSSI
       }
       packetCount[currentAngle]++;
+      angleHasData[currentAngle] = true;  // Mark this angle as having data
     }
 
     // Light up signal LED
@@ -181,14 +186,15 @@ void handleLoRaReception() {
     doc["timestamp"] = millis();
     doc["tracking"] = isTracking;
     doc["best_rssi_at_angle"] = bestRSSI[currentAngle];
+    doc["best_snr_at_angle"] = bestSNR[currentAngle];
     doc["packet_count_at_angle"] = packetCount[currentAngle];
 
     String jsonString;
     serializeJson(doc, jsonString);
     client.publish(GET_TOPIC(TOPIC_LORA_DATA), jsonString.c_str());
 
-    Serial.printf("📦 Angle %d° | RSSI: %d dBm | Best: %d dBm | SNR: %.2f | Packets: %d | Data: %s\n",
-                  currentAngle, rssi, bestRSSI[currentAngle], snr, packetCount[currentAngle], message.c_str());
+    Serial.printf("📦 Angle %d° | RSSI: %d dBm | Best: %d dBm | SNR: %.2f | Best SNR: %.2f | Packets: %d | Data: %s\n",
+                  currentAngle, rssi, bestRSSI[currentAngle], snr, bestSNR[currentAngle], packetCount[currentAngle], message.c_str());
 
     // Move to next angle immediately after receiving a packet
     if (isTracking) {
@@ -220,7 +226,8 @@ void moveToNextAngle() {
     stopTracking();
     publishRotationComplete();
     publishStoredData();
-    publishStatus("Tracking completed - Full rotation finished");
+    publishAllAnglesData();  // Publish only angles with data and their best RSSI
+    publishStatus("Tracking completed - Full rotation finished - Valid angle data published");
     return;
   }
 
@@ -252,10 +259,12 @@ void startTracking() {
     return;
   }
 
-  // Initialize data arrays
+  // Initialize data arrays for all 181 angles (0-180)
   for (int i = 0; i <= MAX_ANGLE; i++) {
-    bestRSSI[i] = -999;  // -999 indicates no signal
+    bestRSSI[i] = -999;        // -999 indicates no signal
     packetCount[i] = 0;
+    bestSNR[i] = -999.0;       // Initialize SNR
+    angleHasData[i] = false;   // No data yet
   }
 
   isTracking = true;
@@ -264,8 +273,8 @@ void startTracking() {
   moveServoToAngle(currentAngle);
   angleStartTime = millis();
 
-  publishStatus("Tracking started - Data arrays initialized");
-  Serial.println("🚀 Tracking started - Beginning antenna scan with data storage");
+  publishStatus("Tracking started - Data arrays initialized for signal detection");
+  Serial.println("🚀 Tracking started - Ready to collect signal data at each angle");
 }
 
 void stopTracking() {
@@ -280,6 +289,7 @@ void stopTracking() {
   if (rotationComplete) {
     publishRotationComplete();
     publishStoredData();
+    publishAllAnglesData();  // Publish only angles with data
   }
 
   publishStatus("Tracking stopped");
@@ -292,13 +302,15 @@ void resetSystem() {
   moveServoToAngle(0);
   rotationComplete = false;
 
-  // Clear stored data
+  // Clear stored data for all angles
   for (int i = 0; i <= MAX_ANGLE; i++) {
     bestRSSI[i] = -999;
     packetCount[i] = 0;
+    bestSNR[i] = -999.0;
+    angleHasData[i] = false;
   }
 
-  publishStatus("System reset - Antenna at 0° - Data cleared");
+  publishStatus("System reset - Antenna at 0° - Data arrays cleared");
   Serial.println("🔄 System reset - Servo returned to 0° - Stored data cleared");
 }
 
@@ -308,7 +320,7 @@ void resetSystem() {
 void publishRotationComplete() {
   DynamicJsonDocument doc(256);
   doc["message"] = "Full rotation completed";
-  doc["total_angles"] = MAX_ANGLE + 1;
+  doc["total_angles"] = MAX_ANGLE + 1;  // 181 angles (0-180)
   doc["timestamp"] = millis();
 
   // Calculate statistics
@@ -317,7 +329,7 @@ void publishRotationComplete() {
   int bestOverallRSSI = -999;
 
   for (int i = 0; i <= MAX_ANGLE; i++) {
-    if (bestRSSI[i] > -999) {
+    if (angleHasData[i]) {
       validReadings++;
       if (bestRSSI[i] > bestOverallRSSI) {
         bestOverallRSSI = bestRSSI[i];
@@ -327,26 +339,30 @@ void publishRotationComplete() {
   }
 
   doc["valid_readings"] = validReadings;
+  doc["angles_with_no_data"] = (MAX_ANGLE + 1) - validReadings;
   doc["best_angle"] = bestOverallAngle;
   doc["best_rssi"] = bestOverallRSSI;
 
   String jsonString;
   serializeJson(doc, jsonString);
   client.publish(GET_TOPIC(TOPIC_ROTATION_COMPLETE), jsonString.c_str());
-  Serial.printf("🎯 Rotation Complete! Best signal: %d dBm at %d°\n", bestOverallRSSI, bestOverallAngle);
+  Serial.printf("🎯 Rotation Complete! Best signal: %d dBm at %d° | Valid readings: %d/181\n", 
+                bestOverallRSSI, bestOverallAngle, validReadings);
 }
 
 void publishStoredData() {
-  // Find the best angle and RSSI
+  // Find the best angle and RSSI (unchanged - still publishes best single point)
   int bestAngle = -1;
   int bestRSSIValue = -999;
   int packetCountAtBest = 0;
+  float bestSNRValue = -999.0;
 
   for (int i = 0; i <= MAX_ANGLE; i++) {
-    if (bestRSSI[i] > bestRSSIValue) {
+    if (angleHasData[i] && bestRSSI[i] > bestRSSIValue) {
       bestRSSIValue = bestRSSI[i];
       bestAngle = i;
       packetCountAtBest = packetCount[i];
+      bestSNRValue = bestSNR[i];
     }
   }
 
@@ -357,19 +373,71 @@ void publishStoredData() {
   if (bestAngle >= 0) {
     doc["angle"] = bestAngle;
     doc["rssi"] = bestRSSIValue;
+    doc["snr"] = bestSNRValue;
     doc["packet_count"] = packetCountAtBest;
   } else {
-    doc["angle"] = nullptr;  // No valid data
+    doc["angle"] = nullptr;
     doc["rssi"] = nullptr;
+    doc["snr"] = nullptr;
     doc["packet_count"] = 0;
   }
 
   String jsonString;
   serializeJson(doc, jsonString);
   client.publish(GET_TOPIC(TOPIC_STORED_DATA), jsonString.c_str());
-  Serial.printf("📊 Published best angle data: Angle %d°, RSSI %d dBm, Packets %d\n",
-                bestAngle, bestRSSIValue, packetCountAtBest);
+  Serial.printf("📊 Published best angle data: Angle %d°, RSSI %d dBm, SNR %.2f, Packets %d\n",
+                bestAngle, bestRSSIValue, bestSNRValue, packetCountAtBest);
 }
+
+// -----------------
+// NEW FUNCTION: Publish Only Angles With Data and Their Best RSSI
+// -----------------
+void publishAllAnglesData() {
+  Serial.println("📡 Publishing angles with data and their best RSSI values...");
+  
+  DynamicJsonDocument doc(4096);  // Smaller size since we're only publishing valid data
+  
+  doc["message"] = "Angles with signal data and best RSSI values";
+  doc["board_id"] = BOARD_ID;
+  doc["timestamp"] = millis();
+  doc["scan_range"] = "0-180 degrees";
+  
+  // Create arrays for only angles that have data
+  JsonArray angles = doc.createNestedArray("angles");
+  JsonArray rssi_values = doc.createNestedArray("rssi");
+  
+  int validPoints = 0;
+  
+  // Only include angles that have data
+  for (int i = 0; i <= MAX_ANGLE; i++) {
+    if (angleHasData[i]) {
+      angles.add(i);
+      rssi_values.add(bestRSSI[i]);
+      validPoints++;
+    }
+  }
+  
+  String jsonString;
+  serializeJson(doc, jsonString);
+  
+  // Publish complete dataset (should be much smaller now)
+  bool published = client.publish(GET_TOPIC(TOPIC_ALL_ANGLES_DATA), jsonString.c_str());
+  if (published) {
+    Serial.printf("✅ Published angle data: %d angles with signals (%d bytes)\n", 
+                  validPoints, jsonString.length());
+    Serial.printf("📊 Data points: ");
+    for (int i = 0; i <= MAX_ANGLE; i++) {
+      if (angleHasData[i]) {
+        Serial.printf("%d°:%ddBm ", i, bestRSSI[i]);
+      }
+    }
+    Serial.println();
+  } else {
+    Serial.printf("❌ Failed to publish angle data\n");
+  }
+}
+
+
 
 // -----------------
 // Status Functions
@@ -386,10 +454,14 @@ void publishStatus(String message) {
 
   if (currentAngle >= 0 && currentAngle <= MAX_ANGLE) {
     doc["current_best_rssi"] = bestRSSI[currentAngle];
+    doc["current_best_snr"] = bestSNR[currentAngle];
     doc["current_packet_count"] = packetCount[currentAngle];
+    doc["current_has_data"] = angleHasData[currentAngle];
   } else {
     doc["current_best_rssi"] = nullptr;
+    doc["current_best_snr"] = nullptr;
     doc["current_packet_count"] = 0;
+    doc["current_has_data"] = false;
   }
 
   String jsonString;
@@ -443,10 +515,12 @@ void setup() {
   client.setServer(mqtt_server, mqtt_port);
   client.setCallback(callback);
 
-  // Initialize data storage arrays
+  // Initialize data storage arrays for all 181 angles
   for (int i = 0; i <= MAX_ANGLE; i++) {
-    bestRSSI[i] = -999;  // -999 indicates no signal
+    bestRSSI[i] = -999;        // -999 indicates no signal
     packetCount[i] = 0;
+    bestSNR[i] = -999.0;
+    angleHasData[i] = false;
   }
   rotationComplete = false;
 
@@ -462,6 +536,8 @@ void setup() {
   Serial.printf("  • %s - Current angle\n", GET_TOPIC(TOPIC_ANGLE));
   Serial.printf("  • %s - Rotation summary\n", GET_TOPIC(TOPIC_ROTATION_COMPLETE));
   Serial.printf("  • %s - Best angle data\n", GET_TOPIC(TOPIC_STORED_DATA));
+  Serial.printf("  • %s - Angles with signal data\n", GET_TOPIC(TOPIC_ALL_ANGLES_DATA));
+  Serial.println("📊 Ready to scan 0°-180° and report angles with detected signals");
 }
 
 void loop() {
