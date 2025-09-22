@@ -47,7 +47,7 @@ project-root/
    - Run the installer as administrator
 
 2. **Add Mosquitto to System PATH**
-   - Open System Properties → Advanced → Environment Variables
+   - Open System Properties → Advanced → System Variables
    - Add `C:\Program Files\mosquitto` to your PATH variable
 
 ## Step 2: Create Required Directories
