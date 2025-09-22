@@ -1,10 +1,4 @@
-import React, {
-  useState,
-  useEffect,
-  useRef,
-  useCallback,
-  useMemo,
-} from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Header from './components/Header.jsx';
 import ConnectionControl from './components/ConnectionControl.jsx';
 import BoardControl from './components/BoardControl.jsx';
@@ -12,6 +6,7 @@ import LiveChart from './components/LiveChart.jsx';
 import LiveDataDisplay from './components/LiveDataDisplay.jsx';
 import SystemLogs from './components/SystemLogs.jsx';
 import SettingsPanel from './components/SettingsPanel.jsx';
+import TriangulationCalculator from './components/TriangulationCalculator.jsx';
 
 const App = () => {
   const [brokerHost, setBrokerHost] = useState(() => {
@@ -685,6 +680,8 @@ const App = () => {
             connectMQTT={connectMQTT}
             disconnectMQTT={disconnectMQTT}
           />
+          <SystemLogs logs={logs} />
+
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
             {BOARDS.map((boardId) => (
               <div
@@ -744,7 +741,7 @@ const App = () => {
               </div>
             ))}
           </div>
-          <SystemLogs logs={logs} />
+          <TriangulationCalculator systemData={systemData} />
         </div>
       </div>
     </div>
