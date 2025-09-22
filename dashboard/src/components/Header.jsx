@@ -25,7 +25,7 @@ const Header = ({ isConnected, connecting, systemData, boards }) => {
       </div>
 
       <h1 className="text-4xl font-bold mb-4 relative z-10 text-white">
-        ESP32 LoRa Tracker Dashboard
+        Dual Directional Antenna Based Localization
       </h1>
 
       <div className="absolute top-5 right-5 z-10">

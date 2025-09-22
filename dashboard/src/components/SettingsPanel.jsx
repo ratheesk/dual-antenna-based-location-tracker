@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 const SettingsPanel = ({
   brokerHost,
@@ -9,9 +9,21 @@ const SettingsPanel = ({
   const [tempHost, setTempHost] = useState(brokerHost);
   const [tempPort, setTempPort] = useState(brokerPort);
 
+  // THIS IS THE MISSING PIECE: Update local state when props change
+  useEffect(() => {
+    setTempHost(brokerHost);
+    setTempPort(brokerPort);
+  }, [brokerHost, brokerPort]);
+
   const handleSubmit = (e) => {
     e.preventDefault();
-    updateBrokerConfig(tempHost, tempPort); // Simply call updateBrokerConfig, no redundant state updates
+    updateBrokerConfig(tempHost, tempPort);
+  };
+
+  // Add a reset function to revert changes
+  const handleReset = () => {
+    setTempHost(brokerHost);
+    setTempPort(brokerPort);
   };
 
   return (
@@ -48,19 +60,35 @@ const SettingsPanel = ({
             disabled={isConnected}
           />
         </div>
-        <button
-          type="submit"
-          disabled={isConnected || tempHost.trim() === '' || !tempPort}
-          className="bg-gradient-to-r from-gray-600 to-gray-600 text-white px-4 py-1 rounded-xl font-semibold hover:from-purple-700 hover:to-violet-700 transform hover:-translate-y-1 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg border border-purple-500/50"
-        >
-          {isConnected ? 'Disconnect to Update' : 'Update Config'}
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="submit"
+            disabled={isConnected || tempHost.trim() === '' || !tempPort}
+            className="bg-gradient-to-r from-gray-600 to-gray-600 text-white px-4 py-1 rounded-xl font-semibold hover:from-purple-700 hover:to-violet-700 transform hover:-translate-y-1 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg border border-purple-500/50"
+          >
+            {isConnected ? 'Disconnect to Update' : 'Update Config'}
+          </button>
+          {!isConnected &&
+            (tempHost !== brokerHost || tempPort !== brokerPort) && (
+              <button
+                type="button"
+                onClick={handleReset}
+                className="bg-gray-600 text-white px-3 py-1 rounded-xl font-semibold hover:bg-gray-700 transition-colors shadow-lg border border-gray-500/50"
+              >
+                Reset
+              </button>
+            )}
+        </div>
       </form>
       {isConnected && (
         <p className="text-xs text-yellow-400 mt-1">
           Disconnect to change settings.
         </p>
       )}
+      {/* Debug info - remove this after testing */}
+      <div className="text-xs text-gray-500 mt-2">
+        Current: {brokerHost}:{brokerPort} | Input: {tempHost}:{tempPort}
+      </div>
     </div>
   );
 };

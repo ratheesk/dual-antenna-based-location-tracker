@@ -11,55 +11,149 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 
-// Local Gaussian curve fitting function (since axios/server isn't available)
+// Improved Gaussian curve fitting function with proper parameter estimation
 const gaussianFit = (data) => {
   if (data.length < 3) return null;
 
   const x = data.map((p) => p.angle);
   const y = data.map((p) => p.rssi);
 
-  // Simple gaussian approximation
+  // Step 1: Initial parameter estimates
   const baseline = Math.min(...y);
-  const amplitude = Math.max(...y) - baseline;
-  const maxIndex = y.indexOf(Math.max(...y));
-  const center = x[maxIndex];
-  const sigma = 15; // Approximate beam width
+  const peakRSSI = Math.max(...y);
+  const amplitude = peakRSSI - baseline;
+  const maxIndex = y.indexOf(peakRSSI);
+  const initialCenter = x[maxIndex];
 
-  // Generate fitted curve points with more density for smooth curve
-  const fittedCurve = [];
-  for (let angle = 0; angle <= 180; angle += 0.5) {
-    // Increased density
-    const rssi =
-      baseline +
-      amplitude * Math.exp(-Math.pow(angle - center, 2) / (2 * sigma * sigma));
-    fittedCurve.push({ angle, fitted: rssi, rssi: null }); // rssi: null to avoid scatter points
+  // Step 2: Estimate sigma (beam width) from actual data
+  const halfMax = baseline + amplitude / 2;
+  let leftHalf = initialCenter,
+    rightHalf = initialCenter;
+
+  // Find half-maximum points from actual data
+  for (let i = maxIndex; i >= 0; i--) {
+    if (y[i] <= halfMax) {
+      leftHalf = x[i];
+      break;
+    }
   }
 
-  // Find peak from fitted curve
+  for (let i = maxIndex; i < y.length; i++) {
+    if (y[i] <= halfMax) {
+      rightHalf = x[i];
+      break;
+    }
+  }
+
+  const estimatedFWHM = rightHalf - leftHalf;
+  let initialSigma = estimatedFWHM / 2.355; // FWHM = 2.355 * sigma for Gaussian
+
+  // Ensure reasonable sigma bounds
+  if (initialSigma < 5) initialSigma = 5;
+  if (initialSigma > 45) initialSigma = 45;
+
+  // Step 3: Levenberg-Marquardt-like optimization (simplified)
+  let bestParams = {
+    baseline: baseline,
+    amplitude: amplitude,
+    center: initialCenter,
+    sigma: initialSigma,
+  };
+
+  let bestError = calculateError(data, bestParams);
+  const maxIterations = 50;
+
+  for (let iter = 0; iter < maxIterations; iter++) {
+    // Try small adjustments to each parameter
+    const paramNames = ['center', 'sigma', 'amplitude', 'baseline'];
+    const stepSizes = [0.5, 0.2, 0.1, 0.1];
+
+    let improved = false;
+
+    for (let p = 0; p < paramNames.length; p++) {
+      const paramName = paramNames[p];
+      const stepSize = stepSizes[p] * (bestParams[paramName] || 1);
+
+      // Try positive step
+      const testParamsPos = { ...bestParams };
+      testParamsPos[paramName] += stepSize;
+
+      // Apply bounds
+      if (paramName === 'center') {
+        testParamsPos[paramName] = Math.max(
+          0,
+          Math.min(180, testParamsPos[paramName])
+        );
+      } else if (paramName === 'sigma') {
+        testParamsPos[paramName] = Math.max(
+          1,
+          Math.min(60, testParamsPos[paramName])
+        );
+      } else if (paramName === 'amplitude') {
+        testParamsPos[paramName] = Math.max(0.1, testParamsPos[paramName]);
+      }
+
+      const errorPos = calculateError(data, testParamsPos);
+
+      if (errorPos < bestError) {
+        bestParams = testParamsPos;
+        bestError = errorPos;
+        improved = true;
+        continue;
+      }
+
+      // Try negative step
+      const testParamsNeg = { ...bestParams };
+      testParamsNeg[paramName] -= stepSize;
+
+      // Apply bounds
+      if (paramName === 'center') {
+        testParamsNeg[paramName] = Math.max(
+          0,
+          Math.min(180, testParamsNeg[paramName])
+        );
+      } else if (paramName === 'sigma') {
+        testParamsNeg[paramName] = Math.max(
+          1,
+          Math.min(60, testParamsNeg[paramName])
+        );
+      } else if (paramName === 'amplitude') {
+        testParamsNeg[paramName] = Math.max(0.1, testParamsNeg[paramName]);
+      }
+
+      const errorNeg = calculateError(data, testParamsNeg);
+
+      if (errorNeg < bestError) {
+        bestParams = testParamsNeg;
+        bestError = errorNeg;
+        improved = true;
+      }
+    }
+
+    // Early termination if no improvement
+    if (!improved) break;
+  }
+
+  // Step 4: Generate fitted curve with optimized parameters
+  const fittedCurve = [];
+  for (let angle = 0; angle <= 180; angle += 0.5) {
+    const rssi =
+      bestParams.baseline +
+      bestParams.amplitude *
+        Math.exp(
+          -Math.pow(angle - bestParams.center, 2) /
+            (2 * bestParams.sigma * bestParams.sigma)
+        );
+    fittedCurve.push({ angle, fitted: rssi, rssi: null });
+  }
+
+  // Find actual peak from fitted curve
   const peakPoint = fittedCurve.reduce((max, point) =>
     point.fitted > max.fitted ? point : max
   );
 
-  // Calculate FWHM (Full Width at Half Maximum)
-  const halfMax = baseline + amplitude / 2;
-  let leftPoint = 0,
-    rightPoint = 180;
-
-  for (let i = 0; i < fittedCurve.length; i++) {
-    if (fittedCurve[i].fitted >= halfMax) {
-      leftPoint = fittedCurve[i].angle;
-      break;
-    }
-  }
-
-  for (let i = fittedCurve.length - 1; i >= 0; i--) {
-    if (fittedCurve[i].fitted >= halfMax) {
-      rightPoint = fittedCurve[i].angle;
-      break;
-    }
-  }
-
-  const beamWidth = rightPoint - leftPoint;
+  // Calculate FWHM from fitted parameters
+  const theoreticalFWHM = 2.355 * bestParams.sigma;
 
   return {
     fittedCurve,
@@ -68,14 +162,40 @@ const gaussianFit = (data) => {
       rssi: peakPoint.fitted,
     },
     parameters: {
-      baseline,
-      amplitude,
-      center: peakPoint.angle, // Use actual fitted peak
-      sigma,
+      baseline: bestParams.baseline,
+      amplitude: bestParams.amplitude,
+      center: bestParams.center,
+      sigma: bestParams.sigma,
       peakRssi: peakPoint.fitted,
-      beamWidth: beamWidth.toFixed(1),
+      beamWidth: theoreticalFWHM.toFixed(1),
+      rmse: Math.sqrt(bestError / data.length).toFixed(2),
+    },
+    convergence: {
+      finalError: bestError.toFixed(3),
+      iterations: maxIterations,
     },
   };
+};
+
+// Helper function to calculate sum of squared errors
+const calculateError = (data, params) => {
+  let totalError = 0;
+
+  for (let i = 0; i < data.length; i++) {
+    const x = data[i].angle;
+    const yActual = data[i].rssi;
+    const yFitted =
+      params.baseline +
+      params.amplitude *
+        Math.exp(
+          -Math.pow(x - params.center, 2) / (2 * params.sigma * params.sigma)
+        );
+
+    const error = yActual - yFitted;
+    totalError += error * error;
+  }
+
+  return totalError;
 };
 
 const LiveChart = ({
@@ -144,7 +264,6 @@ const LiveChart = ({
 
   // Combine data for chart rendering - merge measured data with fitted curve
   const combinedData = [];
-  const maxAngle = Math.max(180, ...displayData.map((d) => d.angle));
 
   // Create a comprehensive dataset
   const allAngles = new Set();

@@ -9,8 +9,8 @@
 // -----------------
 // WiFi credentials
 // -----------------
-const char* ssid = "GTCY";
-const char* password = "GladToConnectYou";
+const char* ssid = "@Nari Kooddam";
+const char* password = "Naaddamillai";
 
 // -----------------
 // MQTT broker setup
@@ -210,13 +210,17 @@ void moveServoToAngle(int targetAngle) {
   if (targetAngle < 0) targetAngle = 0;
   if (targetAngle > MAX_ANGLE) targetAngle = MAX_ANGLE;
 
-  Serial.printf("🔄 Moving servo to %d°\n", targetAngle);
-  myservo.write(targetAngle);
-  currentAngle = targetAngle;
-
-  // Publish current angle
-  client.publish(GET_TOPIC(TOPIC_ANGLE), String(currentAngle).c_str());
-  delay(500);  // Allow servo to move
+  // For small movements (during tracking), use direct movement
+  if (abs(targetAngle - currentAngle) <= 5) {
+    Serial.printf("🔄 Moving servo to %d°\n", targetAngle);
+    myservo.write(targetAngle);
+    currentAngle = targetAngle;
+    client.publish(GET_TOPIC(TOPIC_ANGLE), String(currentAngle).c_str());
+    delay(500);  // Allow servo to move
+  } else {
+    // For larger movements, use smooth movement
+    smoothMoveToAngle(targetAngle);
+  }
 }
 
 void moveToNextAngle() {
@@ -298,8 +302,10 @@ void stopTracking() {
 
 void resetSystem() {
   stopTracking();
-  currentAngle = 0;
-  moveServoToAngle(0);
+  
+  // Smooth movement to 0° instead of jumping directly
+  smoothMoveToAngle(0);
+  
   rotationComplete = false;
 
   // Clear stored data for all angles
@@ -310,8 +316,39 @@ void resetSystem() {
     angleHasData[i] = false;
   }
 
-  publishStatus("System reset - Antenna at 0° - Data arrays cleared");
-  Serial.println("🔄 System reset - Servo returned to 0° - Stored data cleared");
+  publishStatus("System reset - Antenna smoothly moved to 0° - Data arrays cleared");
+  Serial.println("🔄 System reset - Servo smoothly returned to 0° - Stored data cleared");
+}
+
+void smoothMoveToAngle(int targetAngle) {
+  if (targetAngle < 0) targetAngle = 0;
+  if (targetAngle > MAX_ANGLE) targetAngle = MAX_ANGLE;
+
+  Serial.printf("🔄 Smoothly moving servo from %d° to %d°\n", currentAngle, targetAngle);
+  
+  // Determine direction and step size
+  int direction = (targetAngle > currentAngle) ? 1 : -1;
+  int step = 2; // Move in 2-degree steps for smooth motion
+  
+  // Move gradually to target angle
+  while (currentAngle != targetAngle) {
+    if (abs(targetAngle - currentAngle) <= step) {
+      // Close to target, move directly
+      currentAngle = targetAngle;
+    } else {
+      // Move by step amount
+      currentAngle += (direction * step);
+    }
+    
+    myservo.write(currentAngle);
+    delay(50); // Small delay between steps for smooth motion
+    
+    // Publish angle updates during smooth movement
+    client.publish(GET_TOPIC(TOPIC_ANGLE), String(currentAngle).c_str());
+  }
+  
+  Serial.printf("✅ Servo smoothly positioned at %d°\n", currentAngle);
+  delay(200); // Final settling delay
 }
 
 // -----------------

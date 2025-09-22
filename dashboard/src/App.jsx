@@ -10,7 +10,7 @@ import TriangulationCalculator from './components/TriangulationCalculator.jsx';
 
 const App = () => {
   const [brokerHost, setBrokerHost] = useState(() => {
-    return localStorage.getItem('mqttHost') || '10.214.162.1';
+    return localStorage.getItem('mqttHost') || '192.168.8.127';
   });
   const [brokerPort, setBrokerPort] = useState(() => {
     return localStorage.getItem('mqttPort') || 9002;
