@@ -217,7 +217,7 @@ const LiveChart = ({
       </div>
 
       {/* Chart */}
-      <div className="h-64 bg-gray-900/50 rounded-lg p-3 border border-purple-500/30">
+      <div className="h-96 bg-gray-900/50 rounded-lg p-3 border border-purple-500/30">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={combinedData}>
             <CartesianGrid

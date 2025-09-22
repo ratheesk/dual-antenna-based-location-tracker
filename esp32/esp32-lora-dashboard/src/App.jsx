@@ -663,7 +663,7 @@ const App = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-violet-800 p-4">
-      <div className="max-w-6xl mx-auto bg-gray-800/95 rounded-2xl shadow-xl backdrop-blur-lg overflow-hidden border border-purple-500/30">
+      <div className="max-w-8xl mx-auto bg-gray-800/95 rounded-2xl shadow-xl backdrop-blur-lg overflow-hidden border border-purple-500/30">
         <Header
           isConnected={isConnected}
           connecting={connecting}
@@ -685,63 +685,65 @@ const App = () => {
             connectMQTT={connectMQTT}
             disconnectMQTT={disconnectMQTT}
           />
-          {BOARDS.map((boardId) => (
-            <div
-              key={boardId}
-              className="mb-8 bg-gray-800/80 rounded-xl p-4 shadow-lg border border-purple-500/30 backdrop-blur-sm"
-            >
-              <h2 className="text-xl font-bold text-purple-300 mb-4 text-center border-b border-purple-500/50 pb-2">
-                Board: {boardId.toUpperCase()}
-                {chartUpdateLocked[boardId] && (
-                  <span className="ml-2 text-sm text-green-400">
-                    (Scan Complete - Curve Fitting Available)
-                  </span>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
+            {BOARDS.map((boardId) => (
+              <div
+                key={boardId}
+                className=" bg-gray-800/80 rounded-xl p-4 shadow-lg border border-purple-500/30 backdrop-blur-sm"
+              >
+                <h2 className="text-xl font-bold text-purple-300 mb-4 text-center border-b border-purple-500/50 pb-2">
+                  Board: {boardId.toUpperCase()}
+                  {chartUpdateLocked[boardId] && (
+                    <span className="ml-2 text-sm text-green-400">
+                      (Scan Complete - Curve Fitting Available)
+                    </span>
+                  )}
+                </h2>
+                {finalData[boardId] && (
+                  <div className="mb-4 p-3 bg-green-900/30 border border-green-500/50 rounded-lg">
+                    <h3 className="text-green-400 font-semibold mb-2">
+                      Final Scan Results:
+                    </h3>
+                    <p className="text-green-200 text-sm">
+                      Detected signals at {finalData[boardId].angles.length}{' '}
+                      angles:{' '}
+                      {finalData[boardId].angles.map((angle, i) => (
+                        <span key={i} className="inline-block mr-2">
+                          {angle}°({finalData[boardId].rssi[i]}dBm)
+                        </span>
+                      ))}
+                    </p>
+                  </div>
                 )}
-              </h2>
-              {finalData[boardId] && (
-                <div className="mb-4 p-3 bg-green-900/30 border border-green-500/50 rounded-lg">
-                  <h3 className="text-green-400 font-semibold mb-2">
-                    Final Scan Results:
-                  </h3>
-                  <p className="text-green-200 text-sm">
-                    Detected signals at {finalData[boardId].angles.length}{' '}
-                    angles:{' '}
-                    {finalData[boardId].angles.map((angle, i) => (
-                      <span key={i} className="inline-block mr-2">
-                        {angle}°({finalData[boardId].rssi[i]}dBm)
-                      </span>
-                    ))}
-                  </p>
+                <div className="grid grid-cols-1  gap-4">
+                  <BoardControl
+                    boardId={boardId}
+                    isConnected={isConnected}
+                    systemData={systemData}
+                    chartUpdateLocked={chartUpdateLocked[boardId]} // Pass lock status
+                    startTracking={startTracking}
+                    stopTracking={stopTracking}
+                    resetSystem={resetSystem}
+                    toggleLED={toggleLED}
+                  />
+                  <LiveChart
+                    boardId={boardId}
+                    chartData={chartData[boardId]}
+                    finalData={finalData[boardId]}
+                    isTracking={systemData[boardId].tracking}
+                    showDetails={true}
+                    onBestAngleUpdate={handlePeakAngleUpdate}
+                    // Chart remains interactive, only data updates are controlled
+                  />
                 </div>
-              )}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <BoardControl
+                <LiveDataDisplay
                   boardId={boardId}
-                  isConnected={isConnected}
-                  systemData={systemData}
-                  chartUpdateLocked={chartUpdateLocked[boardId]} // Pass lock status
-                  startTracking={startTracking}
-                  stopTracking={stopTracking}
-                  resetSystem={resetSystem}
-                  toggleLED={toggleLED}
-                />
-                <LiveChart
-                  boardId={boardId}
-                  chartData={chartData[boardId]}
-                  finalData={finalData[boardId]}
-                  isTracking={systemData[boardId].tracking}
-                  showDetails={true}
-                  onBestAngleUpdate={handlePeakAngleUpdate}
-                  // Chart remains interactive, only data updates are controlled
+                  liveData={liveData}
+                  totalPackets={totalPackets}
                 />
               </div>
-              <LiveDataDisplay
-                boardId={boardId}
-                liveData={liveData}
-                totalPackets={totalPackets}
-              />
-            </div>
-          ))}
+            ))}
+          </div>
           <SystemLogs logs={logs} />
         </div>
       </div>
