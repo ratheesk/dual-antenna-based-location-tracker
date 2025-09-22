@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+} from 'react';
 import Header from './components/Header.jsx';
 import ConnectionControl from './components/ConnectionControl.jsx';
 import BoardControl from './components/BoardControl.jsx';
@@ -46,10 +52,10 @@ const App = () => {
     board1: {
       tracking: false,
       angle: 0,
-      sourceMaxAngle: -1, // Raw measurement best angle
-      sourceMaxRSSI: -999, // Raw measurement best RSSI
-      peakAngle: -1, // Curve fitted peak angle
-      peakRSSI: -999, // Curve fitted peak RSSI
+      sourceMaxAngle: -1,
+      sourceMaxRSSI: -999,
+      peakAngle: -1,
+      peakRSSI: -999,
       loraActive: false,
     },
     board2: {
@@ -63,8 +69,22 @@ const App = () => {
     },
   });
 
-  // Handle curve fitted peak angle updates from LiveChart
-  const handlePeakAngleUpdate = (boardId, peakData) => {
+  const [chartUpdateLocked, setChartUpdateLocked] = useState({
+    board1: false,
+    board2: false,
+  });
+
+  // Performance optimization: Message queue for batch processing
+  const messageQueueRef = useRef([]);
+  const processingRef = useRef(false);
+
+  const mqttClientRef = useRef(null);
+
+  // Debounced chart update to prevent excessive re-renders
+  const chartUpdateTimeoutRef = useRef({});
+
+  // Memoized callback for peak angle updates - store fitted results
+  const handlePeakAngleUpdate = useCallback((boardId, peakData) => {
     setSystemData((prev) => ({
       ...prev,
       [boardId]: {
@@ -74,14 +94,12 @@ const App = () => {
       },
     }));
     addLog(
-      `[${boardId}] Curve fitted peak: ${peakData.angle.toFixed(
+      `[${boardId}] Fitted peak: ${peakData.angle.toFixed(
         1
       )}°, Power: ${peakData.rssi.toFixed(1)} dBm`,
       'info'
     );
-  };
-
-  const mqttClientRef = useRef(null);
+  }, []);
 
   useEffect(() => {
     localStorage.setItem('mqttHost', brokerHost);
@@ -113,6 +131,98 @@ const App = () => {
         document.head.removeChild(script);
       }
     };
+  }, []);
+
+  // PERFORMANCE FIX: Batch process messages to avoid blocking UI
+  const processMessageQueue = useCallback(() => {
+    if (processingRef.current || messageQueueRef.current.length === 0) {
+      return;
+    }
+
+    processingRef.current = true;
+
+    // Process messages in batches
+    const batchSize = 5;
+    const batch = messageQueueRef.current.splice(0, batchSize);
+
+    batch.forEach(({ boardId, topic, data }) => {
+      handleMQTTMessageSync(boardId, topic, data);
+    });
+
+    processingRef.current = false;
+
+    // Continue processing if more messages are queued
+    if (messageQueueRef.current.length > 0) {
+      requestAnimationFrame(processMessageQueue);
+    }
+  }, []);
+
+  // PERFORMANCE FIX: Optimized message handler that queues messages
+  const onMessageArrived = useCallback(
+    (message) => {
+      const topic = message.destinationName;
+      const topicParts = topic.split('/');
+      const boardId = topicParts[1];
+
+      if (!BOARDS.includes(boardId)) {
+        return;
+      }
+
+      let payload;
+      try {
+        payload = message.payloadString;
+      } catch {
+        payload = message.payloadBytes;
+      }
+
+      try {
+        const data =
+          typeof payload === 'string' ? JSON.parse(payload) : payload;
+
+        // Queue the message for batch processing
+        messageQueueRef.current.push({ boardId, topic, data });
+
+        // Start processing if not already running
+        if (!processingRef.current) {
+          requestAnimationFrame(processMessageQueue);
+        }
+      } catch {
+        // Handle non-JSON string payloads
+        messageQueueRef.current.push({ boardId, topic, data: payload });
+        if (!processingRef.current) {
+          requestAnimationFrame(processMessageQueue);
+        }
+      }
+    },
+    [processMessageQueue, BOARDS]
+  );
+
+  // Synchronous message handler (renamed from handleMQTTMessage)
+  const handleMQTTMessageSync = useCallback((boardId, topic, data) => {
+    if (topic.includes('/status')) {
+      handleStatusMessage(boardId, data);
+    } else if (topic.includes('/lora/data') || topic.includes('/data')) {
+      handleLoRaData(boardId, data);
+    } else if (topic.includes('/angle')) {
+      const angleValue = typeof data === 'object' ? data.angle : parseInt(data);
+      setSystemData((prev) => ({
+        ...prev,
+        [boardId]: { ...prev[boardId], angle: angleValue },
+      }));
+    } else if (topic.includes('/rotation/complete')) {
+      handleRotationComplete(boardId, data);
+    } else if (topic.includes('/stored/data')) {
+      handleStoredData(boardId, data);
+    } else if (topic.includes('/all/angles')) {
+      handleFinalAngleData(boardId, data);
+    } else {
+      if (
+        typeof data === 'object' &&
+        (data.rssi !== undefined || data.RSSI !== undefined)
+      ) {
+        handleLoRaData(boardId, data);
+      }
+    }
   }, []);
 
   const connectMQTT = () => {
@@ -209,7 +319,7 @@ const App = () => {
       topics.push(`esp32/${boardId}/angle`);
       topics.push(`esp32/${boardId}/rotation/complete`);
       topics.push(`esp32/${boardId}/stored/data`);
-      topics.push(`esp32/${boardId}/all/angles`); // New topic for final angle data
+      topics.push(`esp32/${boardId}/all/angles`);
     });
 
     topics.forEach((topic) => {
@@ -240,76 +350,7 @@ const App = () => {
     }
   };
 
-  const onMessageArrived = (message) => {
-    const topic = message.destinationName;
-    const topicParts = topic.split('/');
-    const boardId = topicParts[1];
-
-    if (!BOARDS.includes(boardId)) {
-      addLog(`Received message from unknown board: ${boardId}`, 'warning');
-      return;
-    }
-
-    let payload;
-    try {
-      // Try to decode as UTF-8 string
-      payload = message.payloadString;
-    } catch {
-      // Fallback to raw bytes
-      payload = message.payloadBytes;
-    }
-
-    try {
-      // If payload is a string, try JSON parse
-      if (typeof payload === 'string') {
-        const data = JSON.parse(payload);
-        handleMQTTMessage(boardId, topic, data);
-      } else {
-        // Binary payload → handle as Uint8Array
-        handleMQTTMessage(boardId, topic, payload);
-      }
-    } catch {
-      // Not JSON, but still valid UTF-8 string
-      handleMQTTMessage(boardId, topic, payload);
-    }
-  };
-
-  const handleMQTTMessage = (boardId, topic, data) => {
-    console.log(`[${boardId}] Received from ${topic}:`, data);
-
-    if (topic.includes('/status')) {
-      handleStatusMessage(boardId, data);
-    } else if (topic.includes('/lora/data') || topic.includes('/data')) {
-      handleLoRaData(boardId, data);
-    } else if (topic.includes('/angle')) {
-      const angleValue = typeof data === 'object' ? data.angle : parseInt(data);
-      setSystemData((prev) => ({
-        ...prev,
-        [boardId]: { ...prev[boardId], angle: angleValue },
-      }));
-      console.log(`[${boardId}] Angle updated to: ${angleValue}°`);
-    } else if (topic.includes('/rotation/complete')) {
-      handleRotationComplete(boardId, data);
-    } else if (topic.includes('/stored/data')) {
-      handleStoredData(boardId, data);
-    } else if (topic.includes('/all/angles')) {
-      handleFinalAngleData(boardId, data);
-    } else {
-      if (
-        typeof data === 'object' &&
-        (data.rssi !== undefined || data.RSSI !== undefined)
-      ) {
-        handleLoRaData(boardId, data);
-      } else {
-        addLog(
-          `[${boardId}] Received from ${topic}: ${JSON.stringify(data)}`,
-          'info'
-        );
-      }
-    }
-  };
-
-  const handleStatusMessage = (boardId, data) => {
+  const handleStatusMessage = useCallback((boardId, data) => {
     if (typeof data === 'object') {
       setSystemData((prev) => ({
         ...prev,
@@ -326,55 +367,72 @@ const App = () => {
       }));
       addLog(`[${boardId}] Status: ${data.message || 'Status update'}`, 'info');
     }
-  };
+  }, []);
 
-  const handleLoRaData = (boardId, data) => {
-    if (typeof data === 'object') {
-      setTotalPackets((prev) => ({ ...prev, [boardId]: prev[boardId] + 1 }));
-      setLiveData((prev) => ({
-        ...prev,
-        [boardId]: {
-          lastRSSI: data.rssi || data.RSSI || null,
-          lastSNR: data.snr || data.SNR || null,
-          lastMessage: data.message || data.msg || '-',
-        },
-      }));
+  // PERFORMANCE FIX: Debounced chart update
+  const debouncedUpdateChart = useCallback((boardId, angle, rssi) => {
+    // Clear existing timeout for this board
+    if (chartUpdateTimeoutRef.current[boardId]) {
+      clearTimeout(chartUpdateTimeoutRef.current[boardId]);
+    }
 
-      const angle = data.angle || data.current_angle || data.servo_angle;
-      const rssi = data.rssi || data.RSSI || data.signal_strength;
+    // Set new timeout to batch updates
+    chartUpdateTimeoutRef.current[boardId] = setTimeout(() => {
+      updateChart(boardId, angle, rssi);
+    }, 50); // 50ms debounce
+  }, []);
 
-      if (angle !== undefined && rssi !== undefined) {
-        console.log(
-          `[${boardId}] Updating chart: Angle ${angle}°, RSSI ${rssi} dBm`
-        );
-        updateChart(boardId, angle, rssi);
-      }
-
-      const bestRSSI =
-        data.best_rssi_at_angle || data.best_rssi || data.bestRSSI;
-      if (bestRSSI && bestRSSI > systemData[boardId].sourceMaxRSSI) {
-        setSystemData((prev) => ({
+  const handleLoRaData = useCallback(
+    (boardId, data) => {
+      if (typeof data === 'object') {
+        // Batch state updates
+        setTotalPackets((prev) => ({ ...prev, [boardId]: prev[boardId] + 1 }));
+        setLiveData((prev) => ({
           ...prev,
           [boardId]: {
-            ...prev[boardId],
-            sourceMaxRSSI: bestRSSI,
-            sourceMaxAngle: angle || prev[boardId].sourceMaxAngle,
+            lastRSSI: data.rssi || data.RSSI || null,
+            lastSNR: data.snr || data.SNR || null,
+            lastMessage: data.message || data.msg || '-',
           },
         }));
+
+        const angle = data.angle || data.current_angle || data.servo_angle;
+        const rssi = data.rssi || data.RSSI || data.signal_strength;
+
+        if (angle !== undefined && rssi !== undefined) {
+          // Use debounced update for better performance
+          debouncedUpdateChart(boardId, angle, rssi);
+        }
+
+        const bestRSSI =
+          data.best_rssi_at_angle || data.best_rssi || data.bestRSSI;
+        if (bestRSSI && bestRSSI > systemData[boardId]?.sourceMaxRSSI) {
+          setSystemData((prev) => ({
+            ...prev,
+            [boardId]: {
+              ...prev[boardId],
+              sourceMaxRSSI: bestRSSI,
+              sourceMaxAngle: angle || prev[boardId].sourceMaxAngle,
+            },
+          }));
+        }
+
+        // Reduce log frequency for performance
+        if (Math.random() < 0.1) {
+          // Only log 10% of data messages
+          addLog(
+            `[${boardId}] ${angle ? `Angle ${angle}°` : ''} | RSSI: ${
+              rssi || 'N/A'
+            } dBm | SNR: ${data.snr ? data.snr.toFixed(1) : 'N/A'} dB`,
+            'data'
+          );
+        }
       }
+    },
+    [systemData, debouncedUpdateChart]
+  );
 
-      addLog(
-        `[${boardId}] ${angle ? `Angle ${angle}°` : ''} | RSSI: ${
-          rssi || 'N/A'
-        } dBm | SNR: ${data.snr ? data.snr.toFixed(1) : 'N/A'} dB`,
-        'data'
-      );
-    } else {
-      addLog(`[${boardId}] Raw data: ${data}`, 'data');
-    }
-  };
-
-  const handleRotationComplete = (boardId, data) => {
+  const handleRotationComplete = useCallback((boardId, data) => {
     if (typeof data === 'object') {
       addLog(
         `[${boardId}] Rotation Complete! Best: ${data.best_rssi} dBm at ${data.best_angle}°`,
@@ -388,29 +446,24 @@ const App = () => {
         },
       }));
     }
-  };
+  }, []);
 
-  const handleStoredData = (boardId, data) => {
+  const handleStoredData = useCallback((boardId, data) => {
     if (typeof data === 'object') {
       addLog(
         `[${boardId}] Best angle data: Angle ${data.angle}°, RSSI ${data.rssi} dBm`,
         'info'
       );
     }
-  };
+  }, []);
 
-  // NEW: Handle final angle data with all detected angles and their RSSI values
-  const handleFinalAngleData = (boardId, data) => {
+  const handleFinalAngleData = useCallback((boardId, data) => {
     if (typeof data === 'object' && data.angles && data.rssi) {
-      console.log(`[${boardId}] Received final angle data:`, data);
-
-      // Store the final data
       setFinalData((prev) => ({
         ...prev,
         [boardId]: data,
       }));
 
-      // Create chart data from the final angle data
       const finalChartData = [];
       for (let i = 0; i < data.angles.length; i++) {
         finalChartData.push({
@@ -419,13 +472,16 @@ const App = () => {
         });
       }
 
-      // Update chart with final data
       setChartData((prev) => ({
         ...prev,
         [boardId]: finalChartData.sort((a, b) => a.angle - b.angle),
       }));
 
-      // Find best angle from final data
+      setChartUpdateLocked((prev) => ({
+        ...prev,
+        [boardId]: true,
+      }));
+
       let bestAngle = -1;
       let bestRSSI = -999;
       for (let i = 0; i < data.rssi.length; i++) {
@@ -435,7 +491,6 @@ const App = () => {
         }
       }
 
-      // Update system data with final source max angle (raw measurements)
       if (bestAngle >= 0) {
         setSystemData((prev) => ({
           ...prev,
@@ -451,46 +506,55 @@ const App = () => {
         `[${boardId}] Final angle data received: ${data.angles.length} angles with signals`,
         'success'
       );
-      addLog(
-        `[${boardId}] Final scan complete - Best: ${bestRSSI} dBm at ${bestAngle}°`,
-        'success'
-      );
-
-      // Log all detected angles
-      const angleList = data.angles
-        .map((angle, i) => `${angle}°:${data.rssi[i]}dBm`)
-        .join(', ');
-      addLog(`[${boardId}] Detected angles: ${angleList}`, 'info');
     }
-  };
+  }, []);
 
-  const updateChart = (boardId, angle, rssi) => {
-    console.log(`Updating chart for ${boardId}: angle=${angle}, rssi=${rssi}`);
-    setChartData((prevData) => {
-      const prevBoardData = prevData[boardId] || [];
-      const existingIndex = prevBoardData.findIndex(
-        (point) => point.angle === angle
-      );
-      let newBoardData;
-
-      if (existingIndex !== -1) {
-        newBoardData = [...prevBoardData];
-        newBoardData[existingIndex] = { angle, rssi };
-        console.log(`Updated existing point at angle ${angle}: ${rssi} dBm`);
-      } else {
-        newBoardData = [...prevBoardData, { angle, rssi }];
-        console.log(`Added new point at angle ${angle}: ${rssi} dBm`);
+  const updateChart = useCallback(
+    (boardId, angle, rssi) => {
+      // Don't add new data points if updates are locked
+      if (chartUpdateLocked[boardId]) {
+        return;
       }
 
-      const sortedData = newBoardData.sort((a, b) => a.angle - b.angle);
-      console.log(`${boardId} chart now has ${sortedData.length} points`);
+      setChartData((prevData) => {
+        const prevBoardData = prevData[boardId] || [];
+        const existingIndex = prevBoardData.findIndex(
+          (point) => point.angle === angle
+        );
+        let newBoardData;
 
-      return {
-        ...prevData,
-        [boardId]: sortedData,
-      };
-    });
-  };
+        if (existingIndex !== -1) {
+          newBoardData = [...prevBoardData];
+          newBoardData[existingIndex] = { angle, rssi };
+        } else {
+          newBoardData = [...prevBoardData, { angle, rssi }];
+        }
+
+        const sortedData = newBoardData.sort((a, b) => a.angle - b.angle);
+
+        // Check if we've reached 180 or 181 degrees after adding the data
+        if (angle >= 180) {
+          // Lock further updates after this point
+          setTimeout(() => {
+            setChartUpdateLocked((prev) => ({
+              ...prev,
+              [boardId]: true,
+            }));
+            addLog(
+              `[${boardId}] Scan complete at ${angle}° - Data collection finished`,
+              'info'
+            );
+          }, 0);
+        }
+
+        return {
+          ...prevData,
+          [boardId]: sortedData,
+        };
+      });
+    },
+    [chartUpdateLocked]
+  );
 
   const publishMessage = (boardId, topicSuffix, message) => {
     if (!isConnected || !mqttClientRef.current) {
@@ -512,7 +576,8 @@ const App = () => {
     }
   };
 
-  const addLog = (message, type = 'info') => {
+  // PERFORMANCE FIX: Throttled logging to prevent excessive re-renders
+  const addLog = useCallback((message, type = 'info') => {
     const timestamp = new Date().toLocaleTimeString();
     const newLog = {
       id: Date.now() + Math.random(),
@@ -522,9 +587,9 @@ const App = () => {
     };
     setLogs((prevLogs) => {
       const updatedLogs = [...prevLogs, newLog];
-      return updatedLogs.slice(-100);
+      return updatedLogs.slice(-50); // Reduced from 100 to 50 for better performance
     });
-  };
+  }, []);
 
   const startTracking = (boardId) => {
     if (!isConnected) {
@@ -557,9 +622,17 @@ const App = () => {
     }
     publishMessage(boardId, 'reset', '1');
     addLog(`[${boardId}] Resetting system...`, 'info');
+
+    // Clear all timeouts for this board
+    if (chartUpdateTimeoutRef.current[boardId]) {
+      clearTimeout(chartUpdateTimeoutRef.current[boardId]);
+    }
+
     setChartData((prev) => ({ ...prev, [boardId]: [] }));
-    setFinalData((prev) => ({ ...prev, [boardId]: null })); // Clear final data
+    setFinalData((prev) => ({ ...prev, [boardId]: null }));
     setTotalPackets((prev) => ({ ...prev, [boardId]: 0 }));
+    setChartUpdateLocked((prev) => ({ ...prev, [boardId]: false }));
+
     setSystemData((prev) => ({
       ...prev,
       [boardId]: {
@@ -619,8 +692,12 @@ const App = () => {
             >
               <h2 className="text-xl font-bold text-purple-300 mb-4 text-center border-b border-purple-500/50 pb-2">
                 Board: {boardId.toUpperCase()}
+                {chartUpdateLocked[boardId] && (
+                  <span className="ml-2 text-sm text-green-400">
+                    (Scan Complete - Curve Fitting Available)
+                  </span>
+                )}
               </h2>
-              {/* Display final data summary if available */}
               {finalData[boardId] && (
                 <div className="mb-4 p-3 bg-green-900/30 border border-green-500/50 rounded-lg">
                   <h3 className="text-green-400 font-semibold mb-2">
@@ -642,6 +719,7 @@ const App = () => {
                   boardId={boardId}
                   isConnected={isConnected}
                   systemData={systemData}
+                  chartUpdateLocked={chartUpdateLocked[boardId]} // Pass lock status
                   startTracking={startTracking}
                   stopTracking={stopTracking}
                   resetSystem={resetSystem}
@@ -654,6 +732,7 @@ const App = () => {
                   isTracking={systemData[boardId].tracking}
                   showDetails={true}
                   onBestAngleUpdate={handlePeakAngleUpdate}
+                  // Chart remains interactive, only data updates are controlled
                 />
               </div>
               <LiveDataDisplay

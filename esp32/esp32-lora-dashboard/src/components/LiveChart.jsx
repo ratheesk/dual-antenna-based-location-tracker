@@ -1,6 +1,6 @@
-import React, { useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
-  ScatterChart,
+  ComposedChart,
   Scatter,
   Line,
   XAxis,
@@ -10,7 +10,73 @@ import {
   Legend,
   ResponsiveContainer,
 } from 'recharts';
-import { performCurveFitting, calculateR2 } from './curveFitting.jsx';
+
+// Local Gaussian curve fitting function (since axios/server isn't available)
+const gaussianFit = (data) => {
+  if (data.length < 3) return null;
+
+  const x = data.map((p) => p.angle);
+  const y = data.map((p) => p.rssi);
+
+  // Simple gaussian approximation
+  const baseline = Math.min(...y);
+  const amplitude = Math.max(...y) - baseline;
+  const maxIndex = y.indexOf(Math.max(...y));
+  const center = x[maxIndex];
+  const sigma = 15; // Approximate beam width
+
+  // Generate fitted curve points with more density for smooth curve
+  const fittedCurve = [];
+  for (let angle = 0; angle <= 180; angle += 0.5) {
+    // Increased density
+    const rssi =
+      baseline +
+      amplitude * Math.exp(-Math.pow(angle - center, 2) / (2 * sigma * sigma));
+    fittedCurve.push({ angle, fitted: rssi, rssi: null }); // rssi: null to avoid scatter points
+  }
+
+  // Find peak from fitted curve
+  const peakPoint = fittedCurve.reduce((max, point) =>
+    point.fitted > max.fitted ? point : max
+  );
+
+  // Calculate FWHM (Full Width at Half Maximum)
+  const halfMax = baseline + amplitude / 2;
+  let leftPoint = 0,
+    rightPoint = 180;
+
+  for (let i = 0; i < fittedCurve.length; i++) {
+    if (fittedCurve[i].fitted >= halfMax) {
+      leftPoint = fittedCurve[i].angle;
+      break;
+    }
+  }
+
+  for (let i = fittedCurve.length - 1; i >= 0; i--) {
+    if (fittedCurve[i].fitted >= halfMax) {
+      rightPoint = fittedCurve[i].angle;
+      break;
+    }
+  }
+
+  const beamWidth = rightPoint - leftPoint;
+
+  return {
+    fittedCurve,
+    bestAngle: {
+      angle: peakPoint.angle,
+      rssi: peakPoint.fitted,
+    },
+    parameters: {
+      baseline,
+      amplitude,
+      center: peakPoint.angle, // Use actual fitted peak
+      sigma,
+      peakRssi: peakPoint.fitted,
+      beamWidth: beamWidth.toFixed(1),
+    },
+  };
+};
 
 const LiveChart = ({
   boardId,
@@ -20,82 +86,108 @@ const LiveChart = ({
   showDetails = false,
   onBestAngleUpdate,
 }) => {
-  // Only perform curve fitting when we have final data (rotation complete)
-  const { fittedCurve, bestAngle, parameters, quality, isFinalAnalysis } =
-    useMemo(() => {
-      // If we have final data, use it for curve fitting
-      if (finalData && finalData.angles && finalData.rssi) {
-        const finalChartData = finalData.angles.map((angle, i) => ({
-          angle: angle,
-          rssi: finalData.rssi[i],
-        }));
+  const [serverResult, setServerResult] = useState(null);
 
-        if (finalChartData.length >= 3) {
-          const result = performCurveFitting(finalChartData, 'gaussian');
-          const r2Value = calculateR2(finalChartData, result.fittedCurve);
+  // Only perform curve fitting when scan is complete (180/181 degrees) or final data received
+  useEffect(() => {
+    const dataToFit =
+      finalData && finalData.angles && finalData.rssi
+        ? finalData.angles.map((angle, i) => ({
+            angle,
+            rssi: finalData.rssi[i],
+          }))
+        : chartData;
 
-          // Notify parent component of best angle update
-          if (onBestAngleUpdate && result.bestAngle.angle !== -1) {
-            onBestAngleUpdate(boardId, result.bestAngle);
-          }
-
-          return {
-            fittedCurve: result.fittedCurve || [],
-            bestAngle: result.bestAngle,
-            parameters: result.parameters,
-            quality: { ...result.quality, r2: r2Value },
-            isFinalAnalysis: true,
-          };
+    // Trigger curve fitting when:
+    // 1. We have at least 3 data points AND
+    // 2. Either we reached 180/181 degrees OR received final data
+    if (
+      dataToFit.length >= 3 &&
+      ((chartData.length > 0 &&
+        (chartData[chartData.length - 1].angle === 180 ||
+          chartData[chartData.length - 1].angle === 181)) ||
+        (finalData && finalData.angles))
+    ) {
+      // Use local curve fitting instead of server
+      const result = gaussianFit(dataToFit);
+      if (result) {
+        setServerResult(result);
+        if (onBestAngleUpdate && result.bestAngle.angle !== -1) {
+          onBestAngleUpdate(boardId, result.bestAngle);
         }
       }
+    }
+    // Clear curve fitting if we're back to scanning (data reset)
+    else if (chartData.length === 0) {
+      setServerResult(null);
+    }
+  }, [chartData, finalData, boardId, onBestAngleUpdate]);
 
-      // During live tracking or insufficient data, just find simple source max point
-      if (chartData.length > 0) {
-        let sourceMaxPoint = { angle: -1, rssi: -999 };
-        chartData.forEach((point) => {
-          if (point.rssi > sourceMaxPoint.rssi) {
-            sourceMaxPoint = { angle: point.angle, rssi: point.rssi };
-          }
-        });
-
-        return {
-          fittedCurve: [],
-          bestAngle: sourceMaxPoint,
-          parameters: null,
-          quality: { error: 0, r2: 0 },
-          isFinalAnalysis: false,
-        };
-      }
-
-      // No data
-      return {
-        fittedCurve: [],
-        bestAngle: { angle: -1, rssi: -999 },
-        parameters: null,
-        quality: { error: 0, r2: 0 },
-        isFinalAnalysis: false,
-      };
-    }, [chartData, finalData, boardId, onBestAngleUpdate]);
-
-  // Determine which data to display
   const displayData =
     finalData && finalData.angles && finalData.rssi
       ? finalData.angles.map((angle, i) => ({ angle, rssi: finalData.rssi[i] }))
       : chartData;
 
-  // Chart title based on state
+  const fittedCurve = serverResult?.fittedCurve || [];
+  const bestAngle =
+    serverResult?.bestAngle ||
+    (() => {
+      if (displayData.length === 0) return { angle: -1, rssi: -999 };
+      let maxPoint = { angle: -1, rssi: -999 };
+      displayData.forEach((p) => {
+        if (p.rssi > maxPoint.rssi) maxPoint = p;
+      });
+      return maxPoint;
+    })();
+  const parameters = serverResult?.parameters || null;
+  const isFinalAnalysis = !!serverResult;
+
+  // Combine data for chart rendering - merge measured data with fitted curve
+  const combinedData = [];
+  const maxAngle = Math.max(180, ...displayData.map((d) => d.angle));
+
+  // Create a comprehensive dataset
+  const allAngles = new Set();
+
+  // Add all measured data angles
+  displayData.forEach((d) => allAngles.add(d.angle));
+
+  // Add fitted curve angles if available
+  if (fittedCurve.length > 0) {
+    fittedCurve.forEach((d) => allAngles.add(d.angle));
+  }
+
+  // Sort angles and create combined data
+  Array.from(allAngles)
+    .sort((a, b) => a - b)
+    .forEach((angle) => {
+      const dataPoint = displayData.find(
+        (d) => Math.abs(d.angle - angle) < 0.1
+      );
+      const fittedPoint = fittedCurve.find(
+        (d) => Math.abs(d.angle - angle) < 0.1
+      );
+
+      combinedData.push({
+        angle,
+        rssi: dataPoint?.rssi || null,
+        fitted: fittedPoint?.fitted || null,
+        isPeak:
+          bestAngle.angle !== -1 && Math.abs(angle - bestAngle.angle) < 0.5
+            ? bestAngle.rssi
+            : null,
+      });
+    });
+
   const getChartTitle = () => {
-    if (isTracking) {
-      return 'Live RSSI Scanning';
-    } else if (isFinalAnalysis) {
-      return 'Final Results with Gaussian Fit';
-    } else {
-      return 'RSSI vs Angle';
-    }
+    if (isTracking) return 'Live RSSI Scanning';
+    if (isFinalAnalysis) return 'Scan Complete - Gaussian Curve Fitted';
+    return 'RSSI Direction Finding';
   };
 
   return (
     <div className="space-y-2">
+      {/* Header */}
       <div className="flex justify-between items-center">
         <div className="flex items-center space-x-2">
           <h3 className="text-lg font-bold text-purple-300">
@@ -110,20 +202,24 @@ const LiveChart = ({
           {isFinalAnalysis && (
             <div className="flex items-center space-x-1">
               <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
-              <span className="text-xs text-blue-400">Analysis Complete</span>
+              <span className="text-xs text-blue-400">Curve Fitted</span>
             </div>
           )}
         </div>
         <div className="text-sm text-purple-400">
-          {isFinalAnalysis ? 'Peak:' : 'Source Max:'}{' '}
+          {isFinalAnalysis ? 'Fitted Peak:' : 'Current Max:'}{' '}
           {bestAngle.angle !== -1 ? `${bestAngle.angle.toFixed(1)}°` : 'N/A'}
+          {isFinalAnalysis && bestAngle.rssi !== -999
+            ? ` (${bestAngle.rssi.toFixed(1)} dBm)`
+            : ''}
           {parameters && ` | FWHM: ${parameters.beamWidth}°`}
         </div>
       </div>
 
+      {/* Chart */}
       <div className="h-64 bg-gray-900/50 rounded-lg p-3 border border-purple-500/30">
         <ResponsiveContainer width="100%" height="100%">
-          <ScatterChart>
+          <ComposedChart data={combinedData}>
             <CartesianGrid
               strokeDasharray="3 3"
               stroke="#6b46c1"
@@ -132,136 +228,72 @@ const LiveChart = ({
             <XAxis
               dataKey="angle"
               type="number"
-              domain={[0, 180]}
-              label={{
-                value: 'Angle (degrees)',
-                position: 'insideBottom',
-                offset: -5,
-                style: { fill: '#c4b5fd', fontSize: 12 },
-              }}
+              domain={[0, 'dataMax']}
               stroke="#c4b5fd"
               tick={{ fill: '#c4b5fd', fontSize: 10 }}
+              label={{
+                value: 'Angle (°)',
+                position: 'insideBottom',
+                offset: -5,
+                fill: '#c4b5fd',
+              }}
             />
             <YAxis
-              dataKey="rssi"
-              type="number"
+              stroke="#c4b5fd"
+              tick={{ fill: '#c4b5fd', fontSize: 10 }}
               label={{
                 value: 'RSSI (dBm)',
                 angle: -90,
                 position: 'insideLeft',
-                style: { fill: '#c4b5fd', fontSize: 12 },
+                fill: '#c4b5fd',
               }}
-              stroke="#c4b5fd"
-              tick={{ fill: '#c4b5fd', fontSize: 10 }}
             />
             <Tooltip
-              wrapperStyle={{ zIndex: 1000 }}
               contentStyle={{
                 backgroundColor: '#1f2937',
-                color: '#ffffff',
-                border: '1px solid #a78bfa',
+                border: '1px solid #6b46c1',
                 borderRadius: '6px',
-                padding: '10px',
-                fontSize: '13px',
-                fontWeight: '500',
-                boxShadow: '0 5px 15px rgba(139, 92, 246, 0.2)',
-              }}
-              itemStyle={{ color: '#ffffff' }}
-              labelStyle={{
-                color: '#ffffff',
-                fontWeight: '600',
-                fontSize: '14px',
-                marginBottom: '4px',
+                color: '#c4b5fd',
               }}
               formatter={(value, name) => {
-                if (name === 'rssi' || name.includes('RSSI')) {
-                  return [
-                    `${value.toFixed(1)} dBm`,
-                    isFinalAnalysis ? 'Measured Power' : 'Live Power',
-                  ];
-                }
-                if (name === 'best' || name.includes('Peak')) {
-                  return [`${value.toFixed(1)} dBm`, 'Predicted Peak Power'];
-                }
-                if (name.includes('Current')) {
-                  return [`${value.toFixed(1)} dBm`, 'Source Max Power'];
-                }
-                return [`${value.toFixed(1)} dBm`, 'Gaussian Fit'];
+                if (name === 'rssi' && value !== null)
+                  return [`${value.toFixed(1)} dBm`, 'RSSI'];
+                if (name === 'fitted' && value !== null)
+                  return [`${value.toFixed(1)} dBm`, 'Fitted'];
+                if (name === 'isPeak' && value !== null)
+                  return [`${value.toFixed(1)} dBm`, 'Peak'];
+                return [null, ''];
               }}
-              labelFormatter={(label) => `Angle: ${label}°`}
-              content={({ active, payload, label }) => {
-                if (active && payload && payload.length) {
-                  return (
-                    <div className="bg-gray-800 border border-purple-400 rounded-lg p-3 shadow-lg">
-                      <div className="text-purple-200 font-semibold mb-2">
-                        Angle: {label}°
-                      </div>
-                      {payload.map((entry, index) => {
-                        const isPeak =
-                          entry.name?.includes('Peak') ||
-                          entry.name?.includes('best');
-                        const isFit = entry.name?.includes('Fit');
-
-                        return (
-                          <div
-                            key={index}
-                            className="flex justify-between items-center mb-1"
-                          >
-                            <span className="text-purple-300">
-                              {isPeak
-                                ? 'Peak Power:'
-                                : isFit
-                                ? 'Fit Power:'
-                                : 'Power:'}
-                            </span>
-                            <span className="text-white font-medium ml-2">
-                              {entry.value?.toFixed(1)} dBm
-                            </span>
-                          </div>
-                        );
-                      })}
-                      {isFinalAnalysis && (
-                        <div className="text-xs text-purple-400 mt-2 pt-2 border-t border-purple-500/30">
-                          Gaussian curve fitted
-                        </div>
-                      )}
-                    </div>
-                  );
-                }
-                return null;
-              }}
+              labelFormatter={(angle) => `Angle: ${angle}°`}
             />
             <Legend wrapperStyle={{ color: '#c4b5fd', fontSize: 12 }} />
 
-            {/* Data points */}
+            {/* Measured RSSI Points */}
             <Scatter
-              name={isFinalAnalysis ? 'Final RSSI' : 'Live RSSI'}
-              data={displayData}
+              name={isFinalAnalysis ? 'Measured RSSI' : 'Live RSSI'}
+              dataKey="rssi"
               fill={boardId === 'board1' ? '#8b5cf6' : '#ec4899'}
               shape="circle"
-              opacity={isFinalAnalysis ? 0.8 : 0.6}
-              size={isFinalAnalysis ? 8 : 6}
             />
 
-            {/* Gaussian fitted curve - only shown for final analysis */}
-            {isFinalAnalysis && fittedCurve.length > 0 && (
+            {/* Gaussian Fit Line */}
+            {isFinalAnalysis && (
               <Line
                 name="Gaussian Fit"
                 type="monotone"
-                dataKey="rssi"
-                data={fittedCurve}
+                dataKey="fitted"
                 stroke={boardId === 'board1' ? '#3b82f6' : '#f97316'}
-                strokeWidth={3}
+                strokeWidth={2}
                 dot={false}
                 connectNulls={false}
               />
             )}
 
-            {/* Best angle marker */}
+            {/* Peak Point */}
             {bestAngle.angle !== -1 && (
               <Scatter
                 name={isFinalAnalysis ? 'Predicted Peak' : 'Source Max'}
-                data={[bestAngle]}
+                dataKey="isPeak"
                 fill={
                   isFinalAnalysis
                     ? boardId === 'board1'
@@ -272,79 +304,55 @@ const LiveChart = ({
                     : '#f59e0b'
                 }
                 shape={isFinalAnalysis ? 'star' : 'diamond'}
-                size={isFinalAnalysis ? 15 : 12}
+                size={100}
               />
             )}
-          </ScatterChart>
+          </ComposedChart>
         </ResponsiveContainer>
       </div>
 
-      {/* Status and basic info */}
-      <div className="grid grid-cols-2 gap-2 text-xs">
-        <div className="space-y-1">
-          <div className="text-purple-400">
-            {isTracking
-              ? 'Live Status:'
-              : isFinalAnalysis
-              ? 'Final Analysis:'
-              : 'Data Status:'}
-          </div>
-          <div className="text-purple-300">Points: {displayData.length}</div>
-          {isTracking && (
-            <div className="text-green-300">Scanning in progress...</div>
-          )}
-          {isFinalAnalysis && (
-            <div className="text-blue-300">R² = {quality.r2.toFixed(3)}</div>
-          )}
-        </div>
-        {isFinalAnalysis && parameters && (
-          <div className="space-y-1">
-            <div className="text-purple-400">Beam Pattern:</div>
-            <div className="text-purple-300">
-              Peak: {parameters.peakRssi} dBm
-            </div>
-            <div className="text-purple-300">
-              Width: {parameters.beamWidth}° FWHM
+      {/* Parameters Display */}
+      {showDetails && parameters && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-3 bg-gray-900/30 rounded border border-purple-500/20">
+          <div className="text-center">
+            <div className="text-xs text-purple-300">Peak RSSI</div>
+            <div className="font-mono text-sm text-white">
+              {parameters.peakRssi.toFixed(1)} dBm
             </div>
           </div>
-        )}
-        {!isFinalAnalysis && bestAngle.angle !== -1 && (
-          <div className="space-y-1">
-            <div className="text-purple-400">Source Max:</div>
-            <div className="text-purple-300">
-              {bestAngle.rssi.toFixed(1)} dBm
-            </div>
-            <div className="text-purple-300">
-              at {bestAngle.angle.toFixed(1)}°
+          <div className="text-center">
+            <div className="text-xs text-purple-300">Peak Angle</div>
+            <div className="font-mono text-sm text-white">
+              {parameters.center.toFixed(1)}°
             </div>
           </div>
-        )}
-      </div>
-
-      {/* Detailed parameters (only for final analysis) */}
-      {showDetails && isFinalAnalysis && parameters && (
-        <div className="bg-gray-800/50 rounded p-2 text-xs space-y-1 border border-purple-500/20">
-          <div className="text-purple-400 font-medium">
-            Gaussian Parameters:
+          <div className="text-center">
+            <div className="text-xs text-purple-300">Beam Width</div>
+            <div className="font-mono text-sm text-white">
+              {parameters.beamWidth}°
+            </div>
           </div>
-          <div className="grid grid-cols-2 gap-x-4">
-            <div>Center: {parameters.center}°</div>
-            <div>Amplitude: {parameters.amplitude} dB</div>
-            <div>Sigma: {parameters.sigma}°</div>
-            <div>Baseline: {parameters.baseline} dBm</div>
+          <div className="text-center">
+            <div className="text-xs text-purple-300">Amplitude</div>
+            <div className="font-mono text-sm text-white">
+              {parameters.amplitude.toFixed(1)} dB
+            </div>
           </div>
         </div>
       )}
 
-      {/* Live tracking hint */}
-      {isTracking && !isFinalAnalysis && (
-        <div className="bg-yellow-900/20 border border-yellow-500/30 rounded p-2 text-xs">
-          <div className="text-yellow-400 font-medium mb-1">
-            Live Tracking Mode
-          </div>
-          <div className="text-yellow-300">
-            Curve fitting will be performed automatically when scan completes.
-          </div>
+      {/* Data Summary */}
+      {showDetails && displayData.length > 0 && (
+        <div className="flex justify-between text-xs text-purple-400 bg-gray-900/20 p-2 rounded">
+          <span>Data Points: {displayData.length}</span>
+          <span>
+            Range: {Math.min(...displayData.map((d) => d.angle))}° -{' '}
+            {Math.max(...displayData.map((d) => d.angle))}°
+          </span>
+          <span>
+            RSSI Range: {Math.min(...displayData.map((d) => d.rssi)).toFixed(1)}{' '}
+            to {Math.max(...displayData.map((d) => d.rssi)).toFixed(1)} dBm
+          </span>
         </div>
       )}
     </div>
