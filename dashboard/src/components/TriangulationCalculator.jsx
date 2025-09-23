@@ -36,7 +36,7 @@ const TriangulationCalculator = ({
 
   const triangulate = (d, angle1Deg, angle2Deg) => {
     const theta1 = (angle1Deg * Math.PI) / 180;
-    const theta2 = Math.PI - (angle2Deg * Math.PI) / 180;
+    const theta2 = (angle2Deg * Math.PI) / 180;
 
     const sin_diff = Math.sin(theta1 - theta2);
     if (Math.abs(sin_diff) < 1e-10) {
@@ -46,7 +46,6 @@ const TriangulationCalculator = ({
     const sin1 = Math.sin(theta1);
     const cos1 = Math.cos(theta1);
     const sin2 = Math.sin(theta2);
-    const cos2 = Math.cos(theta2);
 
     const t = (-d * sin2) / sin_diff;
     const s = (-d * sin1) / sin_diff;
