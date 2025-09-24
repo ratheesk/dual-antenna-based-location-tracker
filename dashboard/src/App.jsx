@@ -4,7 +4,7 @@ import ConnectionControl from './components/ConnectionControl.jsx';
 import BoardControl from './components/BoardControl.jsx';
 import LiveChart from './components/LiveChart.jsx';
 import LiveDataDisplay from './components/LiveDataDisplay.jsx';
-// import SystemLogs from './components/SystemLogs.jsx';
+import SystemLogs from './components/SystemLogs.jsx';
 import SettingsPanel from './components/SettingsPanel.jsx';
 import TriangulationCalculator from './components/TriangulationCalculator.jsx';
 
@@ -26,10 +26,8 @@ const App = () => {
     board1: false,
     board2: false,
   });
-  const [chartData, setChartData] = useState({
-    board1: [],
-    board2: [],
-  });
+  const [chartDataBoard1, setChartDataBoard1] = useState([]);
+  const [chartDataBoard2, setChartDataBoard2] = useState([]);
   const [finalData, setFinalData] = useState({
     board1: null,
     board2: null,
@@ -69,16 +67,16 @@ const App = () => {
     board2: false,
   });
 
-  // Performance optimization: Message queue for batch processing
+  const [subscriptions, setSubscriptions] = useState({
+    board1: false,
+    board2: false,
+  });
+
   const messageQueueRef = useRef([]);
   const processingRef = useRef(false);
-
   const mqttClientRef = useRef(null);
-
-  // Debounced chart update to prevent excessive re-renders
   const chartUpdateTimeoutRef = useRef({});
 
-  // Memoized callback for peak angle updates - store fitted results
   const handlePeakAngleUpdate = useCallback((boardId, peakData) => {
     setSystemData((prev) => ({
       ...prev,
@@ -128,7 +126,6 @@ const App = () => {
     };
   }, []);
 
-  // PERFORMANCE FIX: Batch process messages to avoid blocking UI
   const processMessageQueue = useCallback(() => {
     if (processingRef.current || messageQueueRef.current.length === 0) {
       return;
@@ -136,7 +133,6 @@ const App = () => {
 
     processingRef.current = true;
 
-    // Process messages in batches
     const batchSize = 5;
     const batch = messageQueueRef.current.splice(0, batchSize);
 
@@ -146,13 +142,11 @@ const App = () => {
 
     processingRef.current = false;
 
-    // Continue processing if more messages are queued
     if (messageQueueRef.current.length > 0) {
       requestAnimationFrame(processMessageQueue);
     }
   }, []);
 
-  // PERFORMANCE FIX: Optimized message handler that queues messages
   const onMessageArrived = useCallback(
     (message) => {
       const topic = message.destinationName;
@@ -174,15 +168,12 @@ const App = () => {
         const data =
           typeof payload === 'string' ? JSON.parse(payload) : payload;
 
-        // Queue the message for batch processing
         messageQueueRef.current.push({ boardId, topic, data });
 
-        // Start processing if not already running
         if (!processingRef.current) {
           requestAnimationFrame(processMessageQueue);
         }
       } catch {
-        // Handle non-JSON string payloads
         messageQueueRef.current.push({ boardId, topic, data: payload });
         if (!processingRef.current) {
           requestAnimationFrame(processMessageQueue);
@@ -192,7 +183,6 @@ const App = () => {
     [processMessageQueue, BOARDS]
   );
 
-  // Synchronous message handler (renamed from handleMQTTMessage)
   const handleMQTTMessageSync = useCallback((boardId, topic, data) => {
     if (topic.includes('/status')) {
       handleStatusMessage(boardId, data);
@@ -296,6 +286,7 @@ const App = () => {
         addLog('Disconnected from MQTT broker', 'info');
         setIsConnected(false);
         setConnecting(false);
+        setSubscriptions({ board1: false, board2: false });
       } catch (error) {
         addLog('Error disconnecting: ' + error.message, 'error');
       }
@@ -306,25 +297,6 @@ const App = () => {
     addLog('Connected to MQTT broker successfully!', 'info');
     setIsConnected(true);
     setConnecting(false);
-
-    const topics = [];
-    BOARDS.forEach((boardId) => {
-      topics.push(`esp32/${boardId}/status`);
-      topics.push(`esp32/${boardId}/lora/data`);
-      topics.push(`esp32/${boardId}/angle`);
-      topics.push(`esp32/${boardId}/rotation/complete`);
-      topics.push(`esp32/${boardId}/stored/data`);
-      topics.push(`esp32/${boardId}/all/angles`);
-    });
-
-    topics.forEach((topic) => {
-      try {
-        mqttClientRef.current.subscribe(topic);
-        addLog(`Subscribed to ${topic}`, 'info');
-      } catch (error) {
-        addLog(`Failed to subscribe to ${topic}: ${error.message}`, 'error');
-      }
-    });
   };
 
   const onConnectFailure = (error) => {
@@ -342,6 +314,7 @@ const App = () => {
       addLog('MQTT connection lost: ' + responseObject.errorMessage, 'error');
       setIsConnected(false);
       setConnecting(false);
+      setSubscriptions({ board1: false, board2: false });
     }
   };
 
@@ -364,23 +337,19 @@ const App = () => {
     }
   }, []);
 
-  // PERFORMANCE FIX: Debounced chart update
   const debouncedUpdateChart = useCallback((boardId, angle, rssi) => {
-    // Clear existing timeout for this board
     if (chartUpdateTimeoutRef.current[boardId]) {
       clearTimeout(chartUpdateTimeoutRef.current[boardId]);
     }
 
-    // Set new timeout to batch updates
     chartUpdateTimeoutRef.current[boardId] = setTimeout(() => {
       updateChart(boardId, angle, rssi);
-    }, 50); // 50ms debounce
+    }, 50);
   }, []);
 
   const handleLoRaData = useCallback(
     (boardId, data) => {
       if (typeof data === 'object') {
-        // Batch state updates
         setTotalPackets((prev) => ({ ...prev, [boardId]: prev[boardId] + 1 }));
         setLiveData((prev) => ({
           ...prev,
@@ -395,7 +364,6 @@ const App = () => {
         const rssi = data.rssi || data.RSSI || data.signal_strength;
 
         if (angle !== undefined && rssi !== undefined) {
-          // Use debounced update for better performance
           debouncedUpdateChart(boardId, angle, rssi);
         }
 
@@ -412,9 +380,7 @@ const App = () => {
           }));
         }
 
-        // Reduce log frequency for performance
         if (Math.random() < 0.1) {
-          // Only log 10% of data messages
           addLog(
             `[${boardId}] ${angle ? `Angle ${angle}°` : ''} | RSSI: ${
               rssi || 'N/A'
@@ -467,10 +433,13 @@ const App = () => {
         });
       }
 
-      setChartData((prev) => ({
-        ...prev,
-        [boardId]: finalChartData.sort((a, b) => a.angle - b.angle),
-      }));
+      const sortedData = finalChartData.sort((a, b) => a.angle - b.angle);
+
+      if (boardId === 'board1') {
+        setChartDataBoard1(sortedData);
+      } else if (boardId === 'board2') {
+        setChartDataBoard2(sortedData);
+      }
 
       setChartUpdateLocked((prev) => ({
         ...prev,
@@ -506,13 +475,13 @@ const App = () => {
 
   const updateChart = useCallback(
     (boardId, angle, rssi) => {
-      // Don't add new data points if updates are locked
       if (chartUpdateLocked[boardId]) {
         return;
       }
 
-      setChartData((prevData) => {
-        const prevBoardData = prevData[boardId] || [];
+      const updateFunction = boardId === 'board1' ? setChartDataBoard1 : setChartDataBoard2;
+      updateFunction((prevData) => {
+        const prevBoardData = prevData || [];
         const existingIndex = prevBoardData.findIndex(
           (point) => point.angle === angle
         );
@@ -527,9 +496,7 @@ const App = () => {
 
         const sortedData = newBoardData.sort((a, b) => a.angle - b.angle);
 
-        // Check if we've reached 180 or 181 degrees after adding the data
         if (angle >= 180) {
-          // Lock further updates after this point
           setTimeout(() => {
             setChartUpdateLocked((prev) => ({
               ...prev,
@@ -542,10 +509,7 @@ const App = () => {
           }, 0);
         }
 
-        return {
-          ...prevData,
-          [boardId]: sortedData,
-        };
+        return sortedData;
       });
     },
     [chartUpdateLocked]
@@ -571,7 +535,6 @@ const App = () => {
     }
   };
 
-  // PERFORMANCE FIX: Throttled logging to prevent excessive re-renders
   const addLog = useCallback((message, type = 'info') => {
     const timestamp = new Date().toLocaleTimeString();
     const newLog = {
@@ -582,7 +545,7 @@ const App = () => {
     };
     setLogs((prevLogs) => {
       const updatedLogs = [...prevLogs, newLog];
-      return updatedLogs.slice(-50); // Reduced from 100 to 50 for better performance
+      return updatedLogs.slice(-50);
     });
   }, []);
 
@@ -618,12 +581,16 @@ const App = () => {
     publishMessage(boardId, 'reset', '1');
     addLog(`[${boardId}] Resetting system...`, 'info');
 
-    // Clear all timeouts for this board
     if (chartUpdateTimeoutRef.current[boardId]) {
       clearTimeout(chartUpdateTimeoutRef.current[boardId]);
     }
 
-    setChartData((prev) => ({ ...prev, [boardId]: [] }));
+    if (boardId === 'board1') {
+      setChartDataBoard1([]);
+    } else if (boardId === 'board2') {
+      setChartDataBoard2([]);
+    }
+
     setFinalData((prev) => ({ ...prev, [boardId]: null }));
     setTotalPackets((prev) => ({ ...prev, [boardId]: 0 }));
     setChartUpdateLocked((prev) => ({ ...prev, [boardId]: false }));
@@ -656,6 +623,70 @@ const App = () => {
     addLog(`[${boardId}] LED turned ${newLedState ? 'ON' : 'OFF'}`, 'info');
   };
 
+  const subscribeToBoard = (boardId) => {
+    if (!isConnected || !mqttClientRef.current) {
+      addLog(`[${boardId}] Cannot subscribe: MQTT not connected`, 'error');
+      return;
+    }
+
+    if (subscriptions[boardId]) {
+      addLog(`[${boardId}] Already subscribed`, 'warning');
+      return;
+    }
+
+    const topics = [
+      `esp32/${boardId}/status`,
+      `esp32/${boardId}/lora/data`,
+      `esp32/${boardId}/angle`,
+      `esp32/${boardId}/rotation/complete`,
+      `esp32/${boardId}/stored/data`,
+      `esp32/${boardId}/all/angles`,
+    ];
+
+    topics.forEach((topic) => {
+      try {
+        mqttClientRef.current.subscribe(topic);
+        addLog(`[${boardId}] Subscribed to ${topic}`, 'info');
+      } catch (error) {
+        addLog(`[${boardId}] Failed to subscribe to ${topic}: ${error.message}`, 'error');
+      }
+    });
+
+    setSubscriptions((prev) => ({ ...prev, [boardId]: true }));
+  };
+
+  const unsubscribeFromBoard = (boardId) => {
+    if (!isConnected || !mqttClientRef.current) {
+      addLog(`[${boardId}] Cannot unsubscribe: MQTT not connected`, 'error');
+      return;
+    }
+
+    if (!subscriptions[boardId]) {
+      addLog(`[${boardId}] Not subscribed`, 'warning');
+      return;
+    }
+
+    const topics = [
+      `esp32/${boardId}/status`,
+      `esp32/${boardId}/lora/data`,
+      `esp32/${boardId}/angle`,
+      `esp32/${boardId}/rotation/complete`,
+      `esp32/${boardId}/stored/data`,
+      `esp32/${boardId}/all/angles`,
+    ];
+
+    topics.forEach((topic) => {
+      try {
+        mqttClientRef.current.unsubscribe(topic);
+        addLog(`[${boardId}] Unsubscribed from ${topic}`, 'info');
+      } catch (error) {
+        addLog(`[${boardId}] Failed to unsubscribe from ${topic}: ${error.message}`, 'error');
+      }
+    });
+
+    setSubscriptions((prev) => ({ ...prev, [boardId]: false }));
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-violet-800 p-4">
       <div className="max-w-8xl mx-auto bg-gray-800/95 rounded-2xl shadow-xl backdrop-blur-lg overflow-hidden border border-purple-500/30">
@@ -680,13 +711,13 @@ const App = () => {
             connectMQTT={connectMQTT}
             disconnectMQTT={disconnectMQTT}
           />
-          {/* <SystemLogs logs={logs} /> */}
+          <SystemLogs logs={logs} />
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
             {BOARDS.map((boardId) => (
               <div
                 key={boardId}
-                className=" bg-gray-800/80 rounded-xl p-4 shadow-lg border border-purple-500/30 backdrop-blur-sm"
+                className="bg-gray-800/80 rounded-xl p-4 shadow-lg border border-purple-500/30 backdrop-blur-sm"
               >
                 <h2 className="text-xl font-bold text-purple-300 mb-4 text-center border-b border-purple-500/50 pb-2">
                   Board: {boardId.toUpperCase()}
@@ -712,25 +743,27 @@ const App = () => {
                     </p>
                   </div>
                 )}
-                <div className="grid grid-cols-1  gap-4">
+                <div className="grid grid-cols-1 gap-4">
                   <BoardControl
                     boardId={boardId}
                     isConnected={isConnected}
                     systemData={systemData}
-                    chartUpdateLocked={chartUpdateLocked[boardId]} // Pass lock status
+                    chartUpdateLocked={chartUpdateLocked[boardId]}
                     startTracking={startTracking}
                     stopTracking={stopTracking}
                     resetSystem={resetSystem}
                     toggleLED={toggleLED}
+                    subscribeToBoard={subscribeToBoard}
+                    unsubscribeFromBoard={unsubscribeFromBoard}
+                    isSubscribed={subscriptions[boardId]}
                   />
                   <LiveChart
                     boardId={boardId}
-                    chartData={chartData[boardId]}
+                    chartData={boardId === 'board1' ? chartDataBoard1 : chartDataBoard2}
                     finalData={finalData[boardId]}
                     isTracking={systemData[boardId].tracking}
                     showDetails={true}
                     onBestAngleUpdate={handlePeakAngleUpdate}
-                    // Chart remains interactive, only data updates are controlled
                   />
                 </div>
                 <LiveDataDisplay

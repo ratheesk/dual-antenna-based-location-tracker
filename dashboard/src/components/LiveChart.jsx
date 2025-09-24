@@ -222,7 +222,7 @@ const LiveChart = ({
     // 1. We have at least 3 data points AND
     // 2. Either we reached 180/181 degrees OR received final data
     if (
-      dataToFit.length >= 3 &&
+      dataToFit.length >= 40 &&
       ((chartData.length > 0 &&
         (chartData[chartData.length - 1].angle === 180 ||
           chartData[chartData.length - 1].angle === 181)) ||
@@ -331,7 +331,7 @@ const LiveChart = ({
           {isFinalAnalysis && bestAngle.rssi !== -999
             ? ` (${bestAngle.rssi.toFixed(1)} dBm)`
             : ''}
-          {parameters && ` | FWHM: ${parameters.beamWidth}°`}
+          {/* {parameters && ` | FWHM: ${parameters.beamWidth}°`} */}
         </div>
       </div>
 
