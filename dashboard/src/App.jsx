@@ -4,7 +4,7 @@ import ConnectionControl from './components/ConnectionControl.jsx';
 import BoardControl from './components/BoardControl.jsx';
 import LiveChart from './components/LiveChart.jsx';
 import LiveDataDisplay from './components/LiveDataDisplay.jsx';
-import SystemLogs from './components/SystemLogs.jsx';
+// import SystemLogs from './components/SystemLogs.jsx';
 import SettingsPanel from './components/SettingsPanel.jsx';
 import TriangulationCalculator from './components/TriangulationCalculator.jsx';
 
@@ -680,7 +680,7 @@ const App = () => {
             connectMQTT={connectMQTT}
             disconnectMQTT={disconnectMQTT}
           />
-          <SystemLogs logs={logs} />
+          {/* <SystemLogs logs={logs} /> */}
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
             {BOARDS.map((boardId) => (
