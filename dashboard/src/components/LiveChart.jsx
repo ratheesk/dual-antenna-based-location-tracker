@@ -201,52 +201,31 @@ const calculateError = (data, params) => {
 const LiveChart = ({
   boardId,
   chartData,
-  finalData = null,
   isTracking = false,
   showDetails = false,
   onBestAngleUpdate,
 }) => {
   const [serverResult, setServerResult] = useState(null);
 
-  // Only perform curve fitting when scan is complete (180/181 degrees) or final data received
+  // Perform curve fitting when chart data indicates scan completion
   useEffect(() => {
-    const dataToFit =
-      finalData && finalData.angles && finalData.rssi
-        ? finalData.angles.map((angle, i) => ({
-            angle,
-            rssi: finalData.rssi[i],
-          }))
-        : chartData;
-
-    // Trigger curve fitting when:
-    // 1. We have at least 3 data points AND
-    // 2. Either we reached 180/181 degrees OR received final data
     if (
-      dataToFit.length >= 40 &&
-      ((chartData.length > 0 &&
-        (chartData[chartData.length - 1].angle === 180 ||
-          chartData[chartData.length - 1].angle === 181)) ||
-        (finalData && finalData.angles))
+      chartData.length >= 3 &&
+      chartData[chartData.length - 1]?.angle >= 180
     ) {
-      // Use local curve fitting instead of server
-      const result = gaussianFit(dataToFit);
+      const result = gaussianFit(chartData);
       if (result) {
         setServerResult(result);
         if (onBestAngleUpdate && result.bestAngle.angle !== -1) {
           onBestAngleUpdate(boardId, result.bestAngle);
         }
       }
-    }
-    // Clear curve fitting if we're back to scanning (data reset)
-    else if (chartData.length === 0) {
+    } else {
       setServerResult(null);
     }
-  }, [chartData, finalData, boardId, onBestAngleUpdate]);
+  }, [chartData, boardId, onBestAngleUpdate]);
 
-  const displayData =
-    finalData && finalData.angles && finalData.rssi
-      ? finalData.angles.map((angle, i) => ({ angle, rssi: finalData.rssi[i] }))
-      : chartData;
+  const displayData = chartData;
 
   const fittedCurve = serverResult?.fittedCurve || [];
   const bestAngle =
@@ -262,21 +241,15 @@ const LiveChart = ({
   const parameters = serverResult?.parameters || null;
   const isFinalAnalysis = !!serverResult;
 
-  // Combine data for chart rendering - merge measured data with fitted curve
+  // Combine data for chart rendering
   const combinedData = [];
-
-  // Create a comprehensive dataset
   const allAngles = new Set();
 
-  // Add all measured data angles
   displayData.forEach((d) => allAngles.add(d.angle));
-
-  // Add fitted curve angles if available
   if (fittedCurve.length > 0) {
     fittedCurve.forEach((d) => allAngles.add(d.angle));
   }
 
-  // Sort angles and create combined data
   Array.from(allAngles)
     .sort((a, b) => a - b)
     .forEach((angle) => {
@@ -306,7 +279,6 @@ const LiveChart = ({
 
   return (
     <div className="space-y-2">
-      {/* Header */}
       <div className="flex justify-between items-center">
         <div className="flex items-center space-x-2">
           <h3 className="text-lg font-bold text-purple-300">
@@ -331,11 +303,9 @@ const LiveChart = ({
           {isFinalAnalysis && bestAngle.rssi !== -999
             ? ` (${bestAngle.rssi.toFixed(1)} dBm)`
             : ''}
-          {/* {parameters && ` | FWHM: ${parameters.beamWidth}°`} */}
         </div>
       </div>
 
-      {/* Chart */}
       <div className="h-96 bg-gray-900/50 rounded-lg p-3 border border-purple-500/30">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={combinedData}>
@@ -386,16 +356,12 @@ const LiveChart = ({
               labelFormatter={(angle) => `Angle: ${angle}°`}
             />
             <Legend wrapperStyle={{ color: '#c4b5fd', fontSize: 12 }} />
-
-            {/* Measured RSSI Points */}
             <Scatter
               name={isFinalAnalysis ? 'Measured RSSI' : 'Live RSSI'}
               dataKey="rssi"
               fill={boardId === 'board1' ? '#8b5cf6' : '#ec4899'}
               shape="circle"
             />
-
-            {/* Gaussian Fit Line */}
             {isFinalAnalysis && (
               <Line
                 name="Gaussian Fit"
@@ -407,8 +373,6 @@ const LiveChart = ({
                 connectNulls={false}
               />
             )}
-
-            {/* Peak Point */}
             {bestAngle.angle !== -1 && (
               <Scatter
                 name={isFinalAnalysis ? 'Predicted Peak' : 'Source Max'}
@@ -430,7 +394,6 @@ const LiveChart = ({
         </ResponsiveContainer>
       </div>
 
-      {/* Parameters Display */}
       {showDetails && parameters && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-3 bg-gray-900/30 rounded border border-purple-500/20">
           <div className="text-center">
@@ -460,7 +423,6 @@ const LiveChart = ({
         </div>
       )}
 
-      {/* Data Summary */}
       {showDetails && displayData.length > 0 && (
         <div className="flex justify-between text-xs text-purple-400 bg-gray-900/20 p-2 rounded">
           <span>Data Points: {displayData.length}</span>

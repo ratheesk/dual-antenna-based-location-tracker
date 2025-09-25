@@ -28,10 +28,6 @@ const App = () => {
   });
   const [chartDataBoard1, setChartDataBoard1] = useState([]);
   const [chartDataBoard2, setChartDataBoard2] = useState([]);
-  const [finalData, setFinalData] = useState({
-    board1: null,
-    board2: null,
-  });
   const [totalPackets, setTotalPackets] = useState({
     board1: 0,
     board2: 0,
@@ -198,8 +194,6 @@ const App = () => {
       handleRotationComplete(boardId, data);
     } else if (topic.includes('/stored/data')) {
       handleStoredData(boardId, data);
-    } else if (topic.includes('/all/angles')) {
-      handleFinalAngleData(boardId, data);
     } else {
       if (
         typeof data === 'object' &&
@@ -406,6 +400,7 @@ const App = () => {
           tracking: false,
         },
       }));
+      unsubscribeFromBoard(boardId)
     }
   }, []);
 
@@ -414,61 +409,6 @@ const App = () => {
       addLog(
         `[${boardId}] Best angle data: Angle ${data.angle}°, RSSI ${data.rssi} dBm`,
         'info'
-      );
-    }
-  }, []);
-
-  const handleFinalAngleData = useCallback((boardId, data) => {
-    if (typeof data === 'object' && data.angles && data.rssi) {
-      setFinalData((prev) => ({
-        ...prev,
-        [boardId]: data,
-      }));
-
-      const finalChartData = [];
-      for (let i = 0; i < data.angles.length; i++) {
-        finalChartData.push({
-          angle: data.angles[i],
-          rssi: data.rssi[i],
-        });
-      }
-
-      const sortedData = finalChartData.sort((a, b) => a.angle - b.angle);
-
-      if (boardId === 'board1') {
-        setChartDataBoard1(sortedData);
-      } else if (boardId === 'board2') {
-        setChartDataBoard2(sortedData);
-      }
-
-      setChartUpdateLocked((prev) => ({
-        ...prev,
-        [boardId]: true,
-      }));
-
-      let bestAngle = -1;
-      let bestRSSI = -999;
-      for (let i = 0; i < data.rssi.length; i++) {
-        if (data.rssi[i] > bestRSSI) {
-          bestRSSI = data.rssi[i];
-          bestAngle = data.angles[i];
-        }
-      }
-
-      if (bestAngle >= 0) {
-        setSystemData((prev) => ({
-          ...prev,
-          [boardId]: {
-            ...prev[boardId],
-            sourceMaxAngle: bestAngle,
-            sourceMaxRSSI: bestRSSI,
-          },
-        }));
-      }
-
-      addLog(
-        `[${boardId}] Final angle data received: ${data.angles.length} angles with signals`,
-        'success'
       );
     }
   }, []);
@@ -591,7 +531,6 @@ const App = () => {
       setChartDataBoard2([]);
     }
 
-    setFinalData((prev) => ({ ...prev, [boardId]: null }));
     setTotalPackets((prev) => ({ ...prev, [boardId]: 0 }));
     setChartUpdateLocked((prev) => ({ ...prev, [boardId]: false }));
 
@@ -640,7 +579,6 @@ const App = () => {
       `esp32/${boardId}/angle`,
       `esp32/${boardId}/rotation/complete`,
       `esp32/${boardId}/stored/data`,
-      `esp32/${boardId}/all/angles`,
     ];
 
     topics.forEach((topic) => {
@@ -672,7 +610,6 @@ const App = () => {
       `esp32/${boardId}/angle`,
       `esp32/${boardId}/rotation/complete`,
       `esp32/${boardId}/stored/data`,
-      `esp32/${boardId}/all/angles`,
     ];
 
     topics.forEach((topic) => {
@@ -727,22 +664,7 @@ const App = () => {
                     </span>
                   )}
                 </h2>
-                {finalData[boardId] && (
-                  <div className="mb-4 p-3 bg-green-900/30 border border-green-500/50 rounded-lg">
-                    <h3 className="text-green-400 font-semibold mb-2">
-                      Final Scan Results:
-                    </h3>
-                    <p className="text-green-200 text-sm">
-                      Detected signals at {finalData[boardId].angles.length}{' '}
-                      angles:{' '}
-                      {finalData[boardId].angles.map((angle, i) => (
-                        <span key={i} className="inline-block mr-2">
-                          {angle}°({finalData[boardId].rssi[i]}dBm)
-                        </span>
-                      ))}
-                    </p>
-                  </div>
-                )}
+              
                 <div className="grid grid-cols-1 gap-4">
                   <BoardControl
                     boardId={boardId}
@@ -760,7 +682,6 @@ const App = () => {
                   <LiveChart
                     boardId={boardId}
                     chartData={boardId === 'board1' ? chartDataBoard1 : chartDataBoard2}
-                    finalData={finalData[boardId]}
                     isTracking={systemData[boardId].tracking}
                     showDetails={true}
                     onBestAngleUpdate={handlePeakAngleUpdate}
