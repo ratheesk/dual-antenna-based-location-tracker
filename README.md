@@ -1,6 +1,6 @@
 # Dual Directional Antenna Based Localization
 
-![Dashboard Screenshot](dashboard.png)
+![Dashboard Screenshot](images/dashboard.png)
 
 ## Mosquitto MQTT Broker Setup with ESP32 and React Dashboard on Windows
 
@@ -22,6 +22,11 @@ project-root/
 ```
 
 ## Hardware Setup
+
+![Hardware Setup](images/hardware.png)
+
+### Signal Generation and Receiving
+- For both transmission and receiving we have used LoRa modules a compact hardware component enabling long-range
 
 ### ESP32 Board Configuration
 
