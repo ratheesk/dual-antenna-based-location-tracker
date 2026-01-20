@@ -33,17 +33,120 @@ project-root/
 
 ![Hardware Setup](images/hardware.png)
 
-### Signal Generation and Receiving
-- For both transmission and receiving we have used LoRa modules a compact hardware component enabling long-range
+### Signal Generation and Reception
 
-### ESP32 Board Configuration
+* **LoRa RF modules** are used for both transmission and reception
+* Operates in **sub-GHz ISM bands** (e.g., 433 MHz, 868 MHz, 915 MHz)
+* Chosen for:
 
-- **Transmitter ESP32**: Configured with appropriate antenna for chosen frequency
-- **Receiver ESP32**: Configured with matching antenna and WiFi connectivity
-- **Buck Converter**: Recommended for stable power supply to both ESP32 boards
-- **Antennas**: Properly tuned for your configured frequency (433MHz, 915MHz, etc.)
+  * Long-range capability
+  * Robust link budget
+  * RSSI and SNR reporting
 
-## Prerequisites
+### ESP32 Configuration
+
+* **Transmitter ESP32**
+
+  * No WiFi required
+  * RF-only operation
+  * Board-specific identifier
+
+* **Receiver ESP32**
+
+  * WiFi enabled
+  * MQTT client
+  * Publishes RF measurements to broker
+
+### Power Supply
+
+* **Buck converter strongly recommended**
+* Avoid powering ESP32 directly from linear regulators
+* Prevents brownout during WiFi transmission peaks
+
+---
+
+## Antenna Design and Optimization
+
+### Transmission Frequency
+
+* The system operates at **433 MHz**, chosen for its availability in the ISM band and compatibility with LoRa modules.
+
+### Antenna Selection
+
+* A **Yagi–Uda antenna** was designed and built for the transmitter.
+* Design goals:
+
+  * Directional radiation pattern for localization
+  * High gain with moderate beamwidth
+  * Minimized side and back lobes
+
+### Simulation and Optimization
+
+* **4NEC2** software was used to simulate antenna parameters and optimize performance.
+
+![Hardware Setup](images/antenna-design.png)
+
+* Simulations included:
+
+  * Element lengths and spacing
+  * Radiation pattern (gain, beamwidth, front-to-back ratio)
+  * Impedance characteristics
+
+![Hardware Setup](images/design-parameters.png)
+
+* Optimization aimed to achieve:
+
+  * Maximum forward gain
+  * VSWR < 2:1 at 433 MHz
+  * Balanced element excitation
+
+### Reference Design
+
+* **Balanis’ “Antenna Theory: Analysis and Design”** was used to determine:
+
+  * Uncompensated element lengths
+  * Compensated lengths after accounting for practical construction factors
+* These calculations ensured theoretical guidance aligned with practical design. See page number 594 - 597
+
+**Reference:**  
+C. A. Balanis, *Antenna Theory: Analysis and Design*, 4th Edition, John Wiley & Sons, 2016.
+
+# Optimized Uncompensated Lengths of Parasitic Elements for Yagi-Uda Antennas
+
+  * Uncompensated element lengths
+  * Compensated lengths after accounting for practical construction factors
+* These calculations ensured theoretical guidance aligned with practical design.
+
+![Hardware Setup](images/radiation-pattern-2.png)
+### Impedance Matching
+
+* A **matching circuit** was calculated using 4NEC2 to ensure proper impedance matching between the Yagi antenna and the 50 Ω LoRa transmitter.
+* Goals:
+
+  * Minimize reflection coefficient
+  * Maximize power transfer to the antenna
+* Typical approach included **LC network optimization**.
+---
+![Hardware Setup](images/matching-circuit-calculation.png)
+### Balun Considerations
+
+* A **balun** (balanced-to-unbalanced transformer) is recommended for Yagi antennas to:
+
+  * Suppress common-mode currents on the feedline
+  * Maintain radiation pattern integrity
+  * Ensure balanced operation between antenna and coax
+* While not yet implemented, a **1:1 or 4:1 current balun** can be added at the feedpoint for improved performance.
+
+### Summary
+![Hardware Setup](images/output-details.png)
+
+radiation-pattern-and-impedance-matching
+
+* The final antenna design combines **simulation-based optimization**, **practical corrections**, and **matching network design** to achieve reliable RF transmission at 433 MHz.
+* Future improvements include **balun implementation** to further reduce feedline radiation and improve impedance matching.
+
+## Software Setup
+### Prerequisites
 
 - Windows 10/11
 - ESP32 development board(s)
