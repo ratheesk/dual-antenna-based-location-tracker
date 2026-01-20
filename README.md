@@ -2,7 +2,15 @@
 
 ![Dashboard Screenshot](images/dashboard.png)
 
+## Overview
+
+This project implements a **dual directional antenna–based RF localization system** using **ESP32**, **LoRa RF modules**, **Mosquitto MQTT**, and a **React (Vite) dashboard**.
+The system estimates the relative direction and position of a transmitter by analyzing received signal characteristics from **directional antennas** connected to spatially separated receiver nodes.
+
+
 ## Mosquitto MQTT Broker Setup with ESP32 and React Dashboard on Windows
+
+
 
 This guide will help you set up a Mosquitto MQTT broker on Windows, connect ESP32 devices for IoT communication, and run a React dashboard for monitoring and control in a dual directional antenna-based localization system.
 
